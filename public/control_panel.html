@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Blinker:wght@100;200;300;400;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <title>TouchDesigner Real-Time Control</title>
+  <script src="/client.js" defer></script>
+  <style>
+    :root {
+      --bg: #161616;
+      --text: #e0e0e0;
+      --text-dim: #888;
+      --accent: #7c5cbf;
+      --accent-dim: #4a3870;
+      --green: #4caf7d;
+      --red: #e05c5c;
+      --yellow: #d4a84b;
+      --mono: "Courier New", Courier, monospace;
+      --sans: "Blinker", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 13px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sliders {
+      margin: 10px;
+    }
+
+    .slider {
+      accent-color: var(--accent);
+    }
+
+    .slider:hover {
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="sliders">
+    <h2>Slider to Control TD</h2>
+    <input type="range" id="controlTD" class="slider">
+
+    <h2>Slider Controlled by TD</h2>
+    <input type="range" id="controlledByTD" class="slider">
+  </div>
+</body>
+
+</html>
