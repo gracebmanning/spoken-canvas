@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Browser Interpreter</title>
+    <!-- Paper.js for vector graphics -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.17/paper-full.min.js"></script>
+    <!-- Anime.js for animations -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: transparent;
+        }
+        canvas {
+            display: block;
+            background: transparent;
+        }
+        #debug {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: red;
+            font-family: monospace;
+            font-size: 14px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            display: block;
+            z-index: 1000;
+        }
+        #script-display {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            color: white;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            font-size: 32px;
+            line-height: 1.6;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 8px;
+            z-index: 1000;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        #script-display .word {
+            display: inline;
+            transition: color 0.1s, background 0.1s;
+            white-space: pre-wrap;
+        }
+        #script-display .word.current {
+            color: #FFD700;
+            background: rgba(255, 215, 0, 0.2);
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        #script-display .word.passed {
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="debug">Connecting...</div>
+    <div id="script-display"></div>
+    
+    <script>
+        const debugEl = document.getElementById('debug');
+        const scriptDisplayEl = document.getElementById('script-display');
+        let wsConnected = false;
+        
+        // Script state tracking
+        let scriptState = {
+            position: 0,
+            totalWords: 0,
+            plainText: "",
+            words: [],
+            shown: false
+        };
+        
+        function debug(msg) {
+            console.log(msg);
+            debugEl.textContent = msg;
+        }
+        
+        // Render script with current word highlighted, preserving original formatting
+        function updateScriptDisplay() {
+            if(!scriptState.shown) 
+                return;
+
+            if (!scriptState.plainText) {
+                scriptDisplayEl.innerHTML = '<span style="color: #666;">Waiting for script...</span>';
+                return;
+            }
+            
+            let html = '';
+            let wordIndex = 0;
+            let currentWord = '';
+            
+            for (let i = 0; i < scriptState.plainText.length; i++) {
+                const char = scriptState.plainText[i];
+                
+                // Check if it's a word character
+                if (/\w/.test(char)) {
+                    currentWord += char;
+                } else {
+                    // End of word - wrap it
+                    if (currentWord.length > 0) {
+                        let className = 'word';
+                        if (wordIndex < scriptState.position) {
+                            className += ' passed';
+                        } else if (wordIndex === scriptState.position) {
+                            className += ' current';
+                        }
+                        html += `<span class="${className}">${currentWord}</span>`;
+                        wordIndex++;
+                        currentWord = '';
+                    }
+                    
+                    // Add the whitespace/punctuation
+                    if (char === '\n') {
+                        html += '<br>';
+                    } else if (char === ' ') {
+                        html += '&nbsp;';
+                    } else {
+                        html += char;
+                    }
+                }
+            }
+            
+            // Handle last word if text doesn't end with whitespace
+            if (currentWord.length > 0) {
+                let className = 'word';
+                if (wordIndex < scriptState.position) {
+                    className += ' passed';
+                } else if (wordIndex === scriptState.position) {
+                    className += ' current';
+                }
+                html += `<span class="${className}">${currentWord}</span>`;
+            }
+            
+            scriptDisplayEl.innerHTML = html;
+            
+            // Auto-scroll to keep current word visible
+            const currentWordEl = scriptDisplayEl.querySelector('.word.current');
+            if (currentWordEl) {
+                currentWordEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+        
+        debug('Browser Interpreter starting...');
+        
+        // ============================================
+        // PAPER.JS SETUP
+        // ============================================
+        
+        // Setup Paper.js
+        const canvas = document.getElementById('canvas');
+        canvas.width = 1920;
+        canvas.height = 1080;
+        paper.setup(canvas);
+        
+        // Convenient aliases
+        const { view, Path, Point, Size } = paper;
+        const center = view.center;
+        
+        // ============================================
+        // INTERPRETER FUNCTIONS (called by eval)
+        // ============================================
+        
+        function parseColor(colorStr) {
+            const colors = {
+                'red': '#FF0000',
+                'green': '#00FF00',
+                'blue': '#0000FF',
+                'yellow': '#FFFF00',
+                'cyan': '#00FFFF',
+                'magenta': '#FF00FF',
+                'white': '#FFFFFF',
+                'black': '#000000',
+                'orange': '#FFA500',
+                'purple': '#800080',
+                'pink': '#FFC0CB',
+                'brown': '#8B4513'
+            };
+            
+            const lower = String(colorStr).toLowerCase().replace(/['"]/g, '');
+            return colors[lower] || colorStr;
+        }
+        
+        function circle(radius, color, x = center.x, y = center.y) {
+            const path = new Path.Circle({
+                center: [x, y],
+                radius: radius,
+                fillColor: parseColor(color)
+            });
+            console.log('Created circle:', path);
+            return path;
+        }
+        
+        function square(size, color, x = center.x, y = center.y) {
+            const path = new Path.Rectangle({
+                center: [x, y],
+                size: [size, size],
+                fillColor: parseColor(color)
+            });
+            console.log('Created square:', path);
+            return path;
+        }
+        
+        function rect(width, height, color, x = center.x, y = center.y) {
+            const path = new Path.Rectangle({
+                center: [x, y],
+                size: [width, height],
+                fillColor: parseColor(color)
+            });
+            return path;
+        }
+        
+        function ellipse(width, height, color, x = center.x, y = center.y) {
+            const path = new Path.Ellipse({
+                center: [x, y],
+                size: [width, height],
+                fillColor: parseColor(color)
+            });
+            return path;
+        }
+        
+        // Scale with animation (using Anime.js)
+        function scale(obj, factor, duration = 1) {
+            if (!obj) {
+                console.error('scale: invalid object', obj);
+                return;
+            }
+            
+            const center = obj.position.clone();
+            const targetSize = obj.bounds.size.multiply(factor);
+            
+            anime({
+                targets: obj.bounds.size,
+                width: targetSize.width,
+                height: targetSize.height,
+                duration: duration * 1000,
+                easing: 'easeOutCubic',
+                update: () => {
+                    obj.position = center;
+                    view.update();
+                }
+            });
+        }
+        
+        // Move with animation
+        function move(obj, x, y, duration = 0) {
+            if (!obj || !obj.position) {
+                console.error('move: invalid object', obj);
+                return;
+            }
+            
+            if (duration > 0) {
+                anime({
+                    targets: obj.position,
+                    x: x,
+                    y: y,
+                    duration: duration * 1000,
+                    easing: 'easeOutCubic',
+                    update: () => view.update()
+                });
+            } else {
+                obj.position.x = x;
+                obj.position.y = y;
+            }
+        }
+        
+        // Rotate (degrees)
+        function rotate(obj, degrees, duration = 0) {
+            if (!obj) return;
+            
+            if (duration > 0) {
+                const targetRotation = obj.rotation + degrees;
+                anime({
+                    targets: obj,
+                    rotation: targetRotation,
+                    duration: duration * 1000,
+                    easing: 'easeOutCubic',
+                    update: () => view.update()
+                });
+            } else {
+                obj.rotation += degrees;
+            }
+        }
+        
+        // Fade opacity
+        function fade(obj, targetOpacity, duration = 1) {
+            if (!obj) return;
+            
+            anime({
+                targets: obj,
+                opacity: targetOpacity,
+                duration: duration * 1000,
+                easing: 'easeOutCubic',
+                update: () => view.update()
+            });
+        }
+        
+        // Remove object
+        function remove(obj) {
+            if (obj && obj.remove) {
+                obj.remove();
+            }
+        }
+        
+        // Clear all
+        function clear() {
+            paper.project.activeLayer.removeChildren();
+            view.draw();
+            console.log('Cleared all objects');
+        }
+        
+        // Debug script state - returns current position info
+        function _debug_script_state() {
+            scriptState.shown = true; // Ensure script display is shown for debugging
+            const info = {
+                position: scriptState.position,
+                total: scriptState.totalWords,
+                progress: scriptState.totalWords > 0 ? 
+                    (scriptState.position / scriptState.totalWords * 100).toFixed(1) + '%' : '0%',
+                context: scriptState.words.slice(
+                    Math.max(0, scriptState.position - 3),
+                    Math.min(scriptState.words.length, scriptState.position + 3)
+                ).join(' ')
+            };
+            
+            console.log('Script State:', info);
+            
+            // Update debug display
+            debug(`Position: ${info.position}/${info.total} (${info.progress})`);
+            
+            return info;
+        }
+        
+        // ============================================
+        // MAKE FUNCTIONS GLOBALLY ACCESSIBLE
+        // ============================================
+        
+        // Expose functions to global scope for eval()
+        window.anime = anime;
+        window.circle = circle;
+        window.square = square;
+        window.rect = rect;
+        window.ellipse = ellipse;
+        window.scale = scale;
+        window.move = move;
+        window.rotate = rotate;
+        window.fade = fade;
+        window.remove = remove;
+        window.clear = clear;
+        window._debug_script_state = _debug_script_state;
+        
+        // Also expose Paper.js objects for direct manipulation
+        window.paper = paper;
+        window.Path = Path;
+        window.Point = Point;
+        window.Size = Size;
+        window.view = view;
+        window.center = center;
+        
+        // ============================================
+        // WEBSOCKET CONNECTION
+        // ============================================
+        
+        let ws;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        
+        function connectWebSocket() {
+            try {
+                const wsUrl = 'ws://127.0.0.1:8000/ws';
+                debug('Connecting to: ' + wsUrl);
+                
+                ws = new WebSocket(wsUrl);
+                
+                ws.onopen = () => {
+                    wsConnected = true;
+                    reconnectAttempts = 0;
+                    debug('Connected! Waiting for commands...');
+                    console.log('WebSocket connected');
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.command === 'execute') {
+                            let code = data.code;
+                            debug('Executing: ' + code);
+                            console.log('>>> EVAL:', code);
+                            
+                            try {
+                                // Replace 'let varname =' with 'window.varname =' to make variables global
+                                code = code.replace(/\blet\s+(\w+)\s*=/g, 'window.$1 =');
+                                code = code.replace(/\bconst\s+(\w+)\s*=/g, 'window.$1 =');
+                                
+                                // Execute in global scope
+                                (0, eval)(code);
+                                
+                                // Force Paper.js to render changes
+                                view.draw();
+                            } catch (e) {
+                                console.error('Execution error:', e);
+                                debug('Error: ' + e.message);
+                            }
+                        } else if (data.command === 'update_position') {
+                            // Update script state
+                            scriptState.position = data.position;
+                            if (data.totalWords) scriptState.totalWords = data.totalWords;
+                            if (data.words) scriptState.words = data.words;
+                            if (data.plainText) scriptState.plainText = data.plainText;
+                            
+                            // Update displays
+                            const progress = scriptState.totalWords > 0 ? 
+                                (scriptState.position / scriptState.totalWords * 100).toFixed(0) : 0;
+                            debug(`Position: ${scriptState.position}/${scriptState.totalWords} (${progress}%)`);
+                            updateScriptDisplay();
+                        }
+                    } catch (e) {
+                        debug('Parse error: ' + e.message);
+                        console.error('Parse error:', e);
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    debug('WebSocket error');
+                    console.error('WebSocket error:', error);
+                };
+                
+                ws.onclose = () => {
+                    wsConnected = false;
+                    debug('Disconnected');
+                    console.log('WebSocket closed');
+                    
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        debug('Reconnecting... attempt ' + reconnectAttempts);
+                        setTimeout(connectWebSocket, 2000);
+                    }
+                };
+            } catch (e) {
+                debug('Error creating WebSocket: ' + e.message);
+            }
+        }
+        
+        // Start connection
+        connectWebSocket();
+        
+        console.log('Paper.js initialized, view size:', view.size);
+        debug('Ready');
+        
+    </script>
+</body>
+</html>
