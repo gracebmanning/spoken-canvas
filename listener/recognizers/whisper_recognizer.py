@@ -155,49 +155,34 @@ class WhisperRecognizer(SpeechRecognizerBase):
                     fp16=False  # Use fp32 for CPU compatibility
                 )
             
-            # Get full transcribed text
+            # Get full transcribed text from this buffer
             current_text = result.get('text', '').strip()
             
-            # Extract all words from current transcription
+            # Clear buffer - we've processed this audio
+            self.audio_buffer = []
+            self.total_frames = 0
+            
+            # Extract words from new transcription
             if current_text:
-                current_words = re.findall(r'\b\w+\b', current_text.lower())
+                # Get words from this transcription
+                new_words = re.findall(r'\b\w+\b', current_text.lower())
                 
-                # Find new words (words that weren't in our previous list)
-                previous_count = len(self.all_recognized_words)
-                
-                # Simple approach: if text is similar to what we had, extract the difference
-                # Otherwise, return all words (handles reset/restart scenarios)
-                new_words = []
-                
-                if previous_count > 0 and len(current_words) > previous_count:
-                    # Check if current words start with our previous words
-                    if current_words[:previous_count] == self.all_recognized_words[-previous_count:]:
-                        # Same beginning, get the new words at the end
-                        new_words = current_words[previous_count:]
-                    else:
-                        # Different - might be a restart, return all current words
-                        new_words = current_words
-                        self.all_recognized_words = []
-                elif previous_count == 0:
-                    # First transcription
-                    new_words = current_words
-                
-                # Update our running list
+                # Add to our running list for context
                 self.all_recognized_words.extend(new_words)
                 
-                # Clear buffer (fresh start for next chunk)
-                self.audio_buffer = []
-                self.total_frames = 0
+                # Keep the running list from getting too long (last 100 words)
+                if len(self.all_recognized_words) > 100:
+                    self.all_recognized_words = self.all_recognized_words[-100:]
                 
                 return new_words
             else:
-                # No text, clear buffer
-                self.audio_buffer = []
-                self.total_frames = 0
+                # No text in this buffer
                 return []
         
         except Exception as e:
             print(f"Error transcribing with Whisper: {e}")
+            import traceback
+            traceback.print_exc()
             # Clear buffer on error
             self.audio_buffer = []
             self.total_frames = 0

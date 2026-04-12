@@ -23,6 +23,38 @@ DEBUG = False
 WEBSOCKET_URL = "ws://localhost:8000/ws"
 
 
+def normalize_text_for_matching(text):
+    """
+    Normalize text for fuzzy matching by removing punctuation and 
+    standardizing spacing. This handles differences like:
+    - "real-time" vs "real time"
+    - "it's" vs "its"
+    - Extra spaces, tabs, newlines
+    
+    Returns:
+        List of normalized words (lowercase, no punctuation)
+    """
+    if not text:
+        return []
+    
+    # Convert to lowercase
+    text = text.lower()
+    
+    # Replace common punctuation with spaces to separate words
+    # This handles hyphenated words, contractions, etc.
+    for char in "-–—_/':":
+        text = text.replace(char, ' ')
+    
+    # Remove all other punctuation and special characters
+    # Keep only letters, numbers, and spaces
+    text = re.sub(r'[^\w\s]', '', text)
+    
+    # Split into words and filter out empty strings
+    words = [w for w in text.split() if w]
+    
+    return words
+
+
 def create_recognizer(recognizer_type, model_path=None, sample_rate=16000):
     """
     Factory function to create a speech recognizer based on type.
@@ -79,6 +111,7 @@ class WebSocketClient:
         self.connected = False
         self.message_queue = queue.Queue()
         self.thread = None
+        self.should_reconnect = True
         
         if websocket is None:
             print("Warning: websocket-client not installed.")
@@ -90,16 +123,26 @@ class WebSocketClient:
     def _run(self):
         if websocket is None:
             return
-        try:
-            self.ws = websocket.WebSocketApp(
-                self.url,
-                on_open=self._on_open,
-                on_error=self._on_error,
-                on_close=self._on_close
-            )
-            self.ws.run_forever()
-        except Exception as e:
-            print(f"WebSocket error: {e}")
+        
+        reconnect_delay = 2  # seconds
+        
+        while self.should_reconnect:
+            try:
+                self.ws = websocket.WebSocketApp(
+                    self.url,
+                    on_open=self._on_open,
+                    on_error=self._on_error,
+                    on_close=self._on_close
+                )
+                self.ws.run_forever()
+            except Exception as e:
+                print(f"WebSocket error: {e}")
+            
+            # If connection closed and we should reconnect, wait and retry
+            if self.should_reconnect and not self.connected:
+                print(f"Reconnecting in {reconnect_delay} seconds...")
+                import time
+                time.sleep(reconnect_delay)
     
     def _on_open(self, ws):
         self.connected = True
@@ -107,11 +150,14 @@ class WebSocketClient:
         threading.Thread(target=self._send_messages, daemon=True).start()
     
     def _on_error(self, ws, error):
-        print(f"WebSocket error: {error}")
+        # Only print if it's not just a connection error
+        if "Connection refused" not in str(error):
+            print(f"WebSocket error: {error}")
     
     def _on_close(self, ws, close_status_code, close_msg):
         self.connected = False
-        print("Disconnected from interpreter")
+        print("Disconnected from interpreter (listener continues working)")
+        print("  Tip: Make sure 'python listener/serve.py' is running")
     
     def _send_messages(self):
         while self.connected:
@@ -146,19 +192,21 @@ class WebSocketClient:
         })
     
     def close(self):
+        self.should_reconnect = False
         if self.ws:
             self.ws.close()
 
 
 def parse_script(script_path):
     """
-    Parse script file to extract plain text and commands.
+    Parse script file to extract plain text, commands, and sentences.
     
     Returns:
-        (plain_text, commands, script_words)
+        (plain_text, commands, script_words, sentences)
         - plain_text: Script with commands removed
         - commands: List of (word_index, command_string)
-        - script_words: List of words from script
+        - script_words: List of normalized words from script (for matching)
+        - sentences: List of (start_word_idx, end_word_idx, sentence_text) tuples
     """
     with open(script_path, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -170,10 +218,41 @@ def parse_script(script_path):
     # Build plain text by removing commands
     plain_text = re.sub(command_pattern, '', content)
     
-    # Extract words from plain text
-    script_words = re.findall(r'\b\w+\b', plain_text.lower())
+    # Normalize and extract words for matching
+    script_words = normalize_text_for_matching(plain_text)
     
-    # Calculate word index for each command
+    # Break into sentences - split on periods, newlines, or command boundaries
+    # Commands act as natural sentence breaks
+    sentences = []
+    current_sentence_start = 0
+    current_text = []
+    
+    # Split plain text by sentence boundaries (period, double newline, or end of text)
+    sentence_parts = re.split(r'\.(?:\s+|\n+)|(?:\n\s*\n)', plain_text)
+    
+    for part in sentence_parts:
+        if not part.strip():
+            continue
+        
+        # Get normalized words for this sentence part
+        part_words = normalize_text_for_matching(part)
+        if not part_words:
+            continue
+        
+        # Add sentence
+        sentence_end = current_sentence_start + len(part_words)
+        sentences.append((
+            current_sentence_start,
+            sentence_end,
+            ' '.join(part_words)
+        ))
+        current_sentence_start = sentence_end
+    
+    # If no sentences found, treat whole script as one sentence
+    if not sentences and script_words:
+        sentences.append((0, len(script_words), ' '.join(script_words)))
+    
+    # Calculate word index for each command (based on normalized words)
     commands = []
     for match in matches:
         command_content = match.group(1)
@@ -188,14 +267,14 @@ def parse_script(script_path):
             else:
                 break
         
-        # Count words before this position in the plain text
+        # Count normalized words before this position
         text_before = plain_text[:plain_pos]
-        words_before = re.findall(r'\b\w+\b', text_before.lower())
+        words_before = normalize_text_for_matching(text_before)
         word_index = len(words_before)
         
         commands.append((word_index, command_content))
     
-    return plain_text, commands, script_words
+    return plain_text, commands, script_words, sentences
 
 
 class RealtimeListener:
@@ -224,7 +303,7 @@ class RealtimeListener:
         
         # Initialize Pygame status window
         pygame.init()
-        self.screen = pygame.display.set_mode((800, 200))
+        self.screen = pygame.display.set_mode((900, 230))
         pygame.display.set_caption("Real-time Listener")
         self.font = pygame.font.Font(None, 36)
         self.small_font = pygame.font.Font(None, 24)
@@ -234,21 +313,79 @@ class RealtimeListener:
         if not self.recognized_words:
             return 0
         
-        best_match_pos = 0
+        # Start searching from current position (monotonic - only move forward)
+        search_start = max(0, self.current_position - 3)
+        
+        best_match_pos = self.current_position
         best_ratio = 0
+        best_window_size = 0
         
-        # Use sliding window
-        window_size = min(10, len(self.recognized_words))
-        recent_words = self.recognized_words[-window_size:]
+        # Try multiple window sizes for robustness (larger windows first for more context)
+        window_sizes = [25, 20, 15, 10, 7, 5]
         
-        for i in range(len(self.script_words) - len(recent_words) + 1):
-            window = self.script_words[i:i + len(recent_words)]
-            matcher = SequenceMatcher(None, recent_words, window)
-            ratio = matcher.ratio()
+        for window_size in window_sizes:
+            # Use recent words as search pattern
+            actual_window = min(window_size, len(self.recognized_words))
+            if actual_window < 3:  # Need at least 3 words to match reliably
+                continue
+                
+            recent_words = self.recognized_words[-actual_window:]
             
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_match_pos = i + len(recent_words)
+            # Search from current position forward (don't go backwards)
+            max_search = len(self.script_words) - len(recent_words) + 1
+            if max_search <= 0:
+                continue
+            
+            for i in range(search_start, max_search):
+                window = self.script_words[i:i + len(recent_words)]
+                
+                # Use SequenceMatcher for fuzzy matching (handles errors)
+                matcher = SequenceMatcher(None, recent_words, window)
+                ratio = matcher.ratio()
+                
+                # Bonus points for proximity to current position
+                # (prefer advancing smoothly rather than jumping)
+                distance = abs(i - self.current_position)
+                distance_penalty = distance * 0.01
+                
+                # Penalize large jumps heavily to prevent false matches
+                if distance > 10:
+                    distance_penalty += 0.2
+                
+                adjusted_ratio = ratio - distance_penalty
+                
+                if adjusted_ratio > best_ratio:
+                    best_ratio = adjusted_ratio
+                    best_match_pos = i + len(recent_words)
+                    best_window_size = actual_window
+            
+            # If we found a good match with this window size, use it
+            # Higher threshold = more strict matching
+            if best_ratio > 0.75:
+                break
+        
+        # Require minimum quality match to advance
+        # Don't advance if match is too poor (prevents false positives)
+        if best_ratio < 0.7:
+            if DEBUG:
+                print(f"  Match quality too low ({best_ratio:.2f}), not advancing")
+            return self.current_position
+        
+        # Don't allow huge jumps (likely false match)
+        max_jump = 15
+        if best_match_pos - self.current_position > max_jump:
+            if DEBUG:
+                print(f"  Jump too large ({best_match_pos - self.current_position} words), limiting to {max_jump}")
+            best_match_pos = self.current_position + max_jump
+        
+        # Debug output for troubleshooting
+        if DEBUG:
+            print(f"  Match: {self.current_position} -> {best_match_pos} (ratio: {best_ratio:.2f}, window: {best_window_size})")
+            if best_match_pos < len(self.script_words):
+                context_start = max(0, best_match_pos - 5)
+                context_end = min(len(self.script_words), best_match_pos + 5)
+                print(f"  Script context: ...{' '.join(self.script_words[context_start:context_end])}...")
+                print(f"  Recognized (last {min(10, len(self.recognized_words))}): {' '.join(self.recognized_words[-10:])}")
         
         return best_match_pos
     
@@ -271,19 +408,43 @@ class RealtimeListener:
         words = self.recognizer.process_audio()
         
         if words:
-            self.recognized_words.extend(words)
+            # Normalize recognized words to match script normalization
+            # Join and re-normalize to handle any punctuation in recognized text
+            raw_text = ' '.join(words)
+            normalized_words = normalize_text_for_matching(raw_text)
             
-            text = ' '.join(words)
-            print(f"Recognized: {text}")
-            if DEBUG:
-                print(f"Total words recognized: {len(self.recognized_words)}")
-            
-            # Update position
-            new_position = self.find_position_in_script()
-            if new_position > self.current_position:
-                self.current_position = new_position
-                self.check_and_execute_commands(self.current_position)
-                # Send position update to interpreter
+            if normalized_words:
+                self.recognized_words.extend(normalized_words)
+                
+                print(f"Recognized: {raw_text}")
+                if DEBUG:
+                    print(f"  Normalized: {' '.join(normalized_words)}")
+                    print(f"  Total words recognized: {len(self.recognized_words)}")
+                
+                # Update position
+                new_position = self.find_position_in_script()
+                
+                # Show progress and next words to say
+                if new_position > self.current_position:
+                    # Calculate what to show next
+                    next_words_start = new_position
+                    next_words_end = min(len(self.script_words), new_position + 15)
+                    next_words = ' '.join(self.script_words[next_words_start:next_words_end])
+                    
+                    progress_pct = int((new_position / len(self.script_words)) * 100) if len(self.script_words) > 0 else 0
+                    print(f"Progress: {self.current_position} → {new_position} / {len(self.script_words)} words ({progress_pct}%)")
+                    
+                    if next_words_end < len(self.script_words):
+                        print(f"  Next: {next_words}...")
+                    elif next_words:
+                        print(f"  Next: {next_words} [END]")
+                    else:
+                        print(f"  ✓ Script complete!")
+                    
+                    self.current_position = new_position
+                    self.check_and_execute_commands(self.current_position)
+                
+                # Always send position update to interpreter (for UI)
                 self.ws_client.send_position(
                     self.current_position,
                     len(self.script_words),
@@ -295,18 +456,33 @@ class RealtimeListener:
         """Draw status window."""
         self.screen.fill((0, 0, 0))
         
-        # Position indicator
+        # Position indicator with progress bar
         y = 20
-        position_text = f"Position: {self.current_position}/{len(self.script_words)}"
+        progress_pct = int((self.current_position / len(self.script_words)) * 100) if len(self.script_words) > 0 else 0
+        position_text = f"Position: {self.current_position}/{len(self.script_words)} ({progress_pct}%)"
         text_surface = self.font.render(position_text, True, (200, 200, 200))
         self.screen.blit(text_surface, (10, y))
         
-        # Recent words
+        # Recent words heard
         y += 40
         recent = ' '.join(self.recognized_words[-5:])
         heard_text = f"Heard: {recent}"
         text_surface = self.small_font.render(heard_text, True, (100, 200, 100))
         self.screen.blit(text_surface, (10, y))
+        
+        # Next words to say (helpful prompt)
+        y += 35
+        if self.current_position < len(self.script_words):
+            next_end = min(len(self.script_words), self.current_position + 10)
+            next_words = ' '.join(self.script_words[self.current_position:next_end])
+            if next_end < len(self.script_words):
+                next_words += "..."
+            next_text = f"Say next: {next_words}"
+            text_surface = self.small_font.render(next_text, True, (255, 215, 0))  # Gold color
+            self.screen.blit(text_surface, (10, y))
+        else:
+            text_surface = self.small_font.render("✓ Script complete!", True, (100, 255, 100))
+            self.screen.blit(text_surface, (10, y))
         
         # Connection status
         y += 40
