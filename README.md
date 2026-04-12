@@ -1,4 +1,11 @@
 
+
+# Basic Architecture
+
+* serve.py is the webserver that acts as the central communication hub
+* listen.py is a client.  It detects the user's speech, determines current location in the script, and sends commands to the websocket server, which will forward along to other clients as necessary
+
+
 # Check the setup
 
 Start the web socket server and the listener

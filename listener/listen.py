@@ -12,8 +12,6 @@ import json
 from pathlib import Path
 from difflib import SequenceMatcher
 import pygame
-import vosk
-import pyaudio
 import threading
 import queue
 try:
@@ -23,6 +21,51 @@ except ImportError:
 
 DEBUG = False
 WEBSOCKET_URL = "ws://localhost:8000/ws"
+
+
+def create_recognizer(recognizer_type, model_path=None, sample_rate=16000):
+    """
+    Factory function to create a speech recognizer based on type.
+    
+    Args:
+        recognizer_type: "vosk" or "whisper"
+        model_path: Path to the model (optional - uses defaults if None)
+        sample_rate: Audio sample rate
+    
+    Returns:
+        Instance of a speech recognizer
+    
+    Raises:
+        ImportError: If the required recognizer dependencies are not installed
+        ValueError: If recognizer_type is not supported
+    """
+    if recognizer_type == "vosk":
+        try:
+            from recognizers import VoskRecognizer
+            # model_path is optional for Vosk, it auto-detects
+            return VoskRecognizer(model_path=model_path, sample_rate=sample_rate)
+        except ImportError as e:
+            print(f"Error: Vosk recognizer dependencies not installed.")
+            print(f"Install with: pip install vosk pyaudio")
+            raise
+    
+    elif recognizer_type == "whisper":
+        try:
+            from recognizers import WhisperRecognizer
+            # For Whisper, model_path is the model name (e.g., "base")
+            model_name = model_path if model_path else "base"
+            return WhisperRecognizer(model_name=model_name, sample_rate=sample_rate)
+        except ImportError as e:
+            if "WhisperRecognizer" in str(e) or "No module named" in str(e):
+                print(f"Error: Whisper recognizer not implemented yet or dependencies not installed.")
+                print(f"To use Whisper, you'll need to:")
+                print(f"  1. Install dependencies: pip install openai-whisper pyaudio")
+                print(f"  2. Implement WhisperRecognizer in recognizers/whisper_recognizer.py")
+                print(f"\nFalling back to Vosk is recommended (use --recognizer vosk)")
+            raise
+    
+    else:
+        raise ValueError(f"Unsupported recognizer type: {recognizer_type}. Choose 'vosk' or 'whisper'")
 
 
 class WebSocketClient:
@@ -156,7 +199,7 @@ def parse_script(script_path):
 class RealtimeListener:
     """Listen to speech and forward commands to interpreters."""
     
-    def __init__(self, script_path, model_path="./models/vosk"):
+    def __init__(self, script_path, recognizer_type="vosk", model_path=None):
         self.script_path = script_path
         
         # Parse script
@@ -173,14 +216,9 @@ class RealtimeListener:
         # Initialize WebSocket
         self.ws_client = WebSocketClient(WEBSOCKET_URL)
         
-        # Initialize Vosk
-        self.model = vosk.Model(model_path)
-        self.recognizer = vosk.KaldiRecognizer(self.model, 16000)
-        self.recognizer.SetWords(True)
-        
-        # Initialize PyAudio
-        self.audio = pyaudio.PyAudio()
-        self.stream = None
+        # Initialize speech recognizer (dynamically based on type)
+        print(f"Initializing {recognizer_type} recognizer...")
+        self.recognizer = create_recognizer(recognizer_type, model_path, sample_rate=16000)
         
         # Initialize Pygame status window
         pygame.init()
@@ -228,32 +266,28 @@ class RealtimeListener:
     
     def process_audio(self):
         """Process audio from microphone."""
-        data = self.stream.read(4000, exception_on_overflow=False)
+        words = self.recognizer.process_audio()
         
-        if self.recognizer.AcceptWaveform(data):
-            result = json.loads(self.recognizer.Result())
-            text = result.get('text', '')
+        if words:
+            self.recognized_words.extend(words)
             
-            if text:
-                words = re.findall(r'\b\w+\b', text.lower())
-                self.recognized_words.extend(words)
-                
-                print(f"Recognized: {text}")
-                if DEBUG:
-                    print(f"Total words recognized: {len(self.recognized_words)}")
-                
-                # Update position
-                new_position = self.find_position_in_script()
-                if new_position > self.current_position:
-                    self.current_position = new_position
-                    self.check_and_execute_commands(self.current_position)
-                    # Send position update to interpreter
-                    self.ws_client.send_position(
-                        self.current_position,
-                        len(self.script_words),
-                        self.script_words,
-                        self.plain_text
-                    )
+            text = ' '.join(words)
+            print(f"Recognized: {text}")
+            if DEBUG:
+                print(f"Total words recognized: {len(self.recognized_words)}")
+            
+            # Update position
+            new_position = self.find_position_in_script()
+            if new_position > self.current_position:
+                self.current_position = new_position
+                self.check_and_execute_commands(self.current_position)
+                # Send position update to interpreter
+                self.ws_client.send_position(
+                    self.current_position,
+                    len(self.script_words),
+                    self.script_words,
+                    self.plain_text
+                )
     
     def draw_ui(self):
         """Draw status window."""
@@ -294,8 +328,7 @@ class RealtimeListener:
         self.recognized_words = []
         self.current_position = 0
         self.executed_commands = set()
-        self.recognizer = vosk.KaldiRecognizer(self.model, 16000)
-        self.recognizer.SetWords(True)
+        self.recognizer.reset()
         
         # Reset browser - clear graphics and reset position
         self.ws_client.send_command("clear()")
@@ -309,13 +342,7 @@ class RealtimeListener:
     def run(self):
         """Main loop."""
         # Open audio stream
-        self.stream = self.audio.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=16000,
-            input=True,
-            frames_per_buffer=4000
-        )
+        self.recognizer.start_stream(frames_per_buffer=4000)
         
         print("="*60)
         print("REAL-TIME LISTENER")
@@ -361,9 +388,7 @@ class RealtimeListener:
                 clock.tick(30)
         
         finally:
-            self.stream.stop_stream()
-            self.stream.close()
-            self.audio.terminate()
+            self.recognizer.cleanup()
             self.ws_client.close()
             pygame.quit()
 
@@ -371,7 +396,17 @@ class RealtimeListener:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Real-time script listener")
     parser.add_argument("script", help="Path to .script file")
-    parser.add_argument("--model", default="./models/vosk", help="Path to Vosk model directory")
+    parser.add_argument(
+        "--recognizer", 
+        choices=["vosk", "whisper"],
+        default="vosk",
+        help="Speech recognizer to use (default: vosk)"
+    )
+    parser.add_argument(
+        "--model", 
+        default=None,
+        help="Optional: Custom model path (Vosk) or model name (Whisper: tiny/base/small/medium/large). Vosk auto-detects if not specified."
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
     
     args = parser.parse_args()
@@ -379,5 +414,9 @@ if __name__ == "__main__":
     if args.debug:
         DEBUG = True
     
-    listener = RealtimeListener(args.script, args.model)
-    listener.run()
+    try:
+        listener = RealtimeListener(args.script, recognizer_type=args.recognizer, model_path=args.model)
+        listener.run()
+    except ImportError:
+        print("\nFailed to initialize recognizer. Please check dependencies and try again.")
+        sys.exit(1)
