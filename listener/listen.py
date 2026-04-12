@@ -54,14 +54,16 @@ def create_recognizer(recognizer_type, model_path=None, sample_rate=16000):
             from recognizers import WhisperRecognizer
             # For Whisper, model_path is the model name (e.g., "base")
             model_name = model_path if model_path else "base"
-            return WhisperRecognizer(model_name=model_name, sample_rate=sample_rate)
+            # Use English by default for more reliable recognition
+            return WhisperRecognizer(model_name=model_name, sample_rate=sample_rate, language="en")
         except ImportError as e:
-            if "WhisperRecognizer" in str(e) or "No module named" in str(e):
-                print(f"Error: Whisper recognizer not implemented yet or dependencies not installed.")
-                print(f"To use Whisper, you'll need to:")
-                print(f"  1. Install dependencies: pip install openai-whisper pyaudio")
-                print(f"  2. Implement WhisperRecognizer in recognizers/whisper_recognizer.py")
-                print(f"\nFalling back to Vosk is recommended (use --recognizer vosk)")
+            error_msg = str(e)
+            if "WhisperRecognizer" in error_msg or "whisper" in error_msg.lower():
+                print(f"Error: Whisper recognizer dependencies not installed.")
+                print(f"To use Whisper, install dependencies:")
+                print(f"  pip install openai-whisper numpy")
+                print(f"\nNote: Whisper also requires ffmpeg for audio processing.")
+                print(f"Falling back to Vosk is recommended (use --recognizer vosk)")
             raise
     
     else:
