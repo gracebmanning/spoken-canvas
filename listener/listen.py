@@ -284,14 +284,17 @@ class RealtimeListener:
         self.script_path = script_path
         
         # Parse script
-        self.plain_text, self.commands, self.script_words = parse_script(script_path)
-        print(f"Loaded script: {len(self.script_words)} words, {len(self.commands)} commands")
+        self.plain_text, self.commands, self.script_words, self.sentences = parse_script(script_path)
+        print(f"Loaded script: {len(self.script_words)} words, {len(self.commands)} commands, {len(self.sentences)} sentences")
         if DEBUG:
             print(f"Commands: {self.commands}")
+            print(f"Sentences: {[(s[0], s[1]) for s in self.sentences]}")  # Just show word ranges
         
-        # Tracking
+        # Tracking - now sentence-based
         self.recognized_words = []
         self.current_position = 0
+        self.current_sentence_idx = 0  # Which sentence we're waiting for
+        self.accumulated_words = []  # Accumulate words until we match a sentence
         self.executed_commands = set()
         
         # Initialize WebSocket
@@ -309,85 +312,61 @@ class RealtimeListener:
         self.small_font = pygame.font.Font(None, 24)
     
     def find_position_in_script(self):
-        """Find current position in script based on recognized words."""
-        if not self.recognized_words:
-            return 0
-        
-        # Start searching from current position (monotonic - only move forward)
-        search_start = max(0, self.current_position - 3)
-        
-        best_match_pos = self.current_position
-        best_ratio = 0
-        best_window_size = 0
-        
-        # Try multiple window sizes for robustness (larger windows first for more context)
-        window_sizes = [25, 20, 15, 10, 7, 5]
-        
-        for window_size in window_sizes:
-            # Use recent words as search pattern
-            actual_window = min(window_size, len(self.recognized_words))
-            if actual_window < 3:  # Need at least 3 words to match reliably
-                continue
-                
-            recent_words = self.recognized_words[-actual_window:]
-            
-            # Search from current position forward (don't go backwards)
-            max_search = len(self.script_words) - len(recent_words) + 1
-            if max_search <= 0:
-                continue
-            
-            for i in range(search_start, max_search):
-                window = self.script_words[i:i + len(recent_words)]
-                
-                # Use SequenceMatcher for fuzzy matching (handles errors)
-                matcher = SequenceMatcher(None, recent_words, window)
-                ratio = matcher.ratio()
-                
-                # Bonus points for proximity to current position
-                # (prefer advancing smoothly rather than jumping)
-                distance = abs(i - self.current_position)
-                distance_penalty = distance * 0.01
-                
-                # Penalize large jumps heavily to prevent false matches
-                if distance > 10:
-                    distance_penalty += 0.2
-                
-                adjusted_ratio = ratio - distance_penalty
-                
-                if adjusted_ratio > best_ratio:
-                    best_ratio = adjusted_ratio
-                    best_match_pos = i + len(recent_words)
-                    best_window_size = actual_window
-            
-            # If we found a good match with this window size, use it
-            # Higher threshold = more strict matching
-            if best_ratio > 0.75:
-                break
-        
-        # Require minimum quality match to advance
-        # Don't advance if match is too poor (prevents false positives)
-        if best_ratio < 0.7:
-            if DEBUG:
-                print(f"  Match quality too low ({best_ratio:.2f}), not advancing")
+        """
+        Sentence-level matching: accumulate words until they match the next expected sentence.
+        Returns the new position if a sentence match is found, otherwise current position.
+        """
+        if self.current_sentence_idx >= len(self.sentences):
+            # We're at the end of the script
             return self.current_position
         
-        # Don't allow huge jumps (likely false match)
-        max_jump = 15
-        if best_match_pos - self.current_position > max_jump:
-            if DEBUG:
-                print(f"  Jump too large ({best_match_pos - self.current_position} words), limiting to {max_jump}")
-            best_match_pos = self.current_position + max_jump
+        # Get the next expected sentence
+        sentence_start, sentence_end, expected_text = self.sentences[self.current_sentence_idx]
+        expected_words = expected_text.split()
         
-        # Debug output for troubleshooting
+        # Get accumulated words as a single string
+        accumulated_text = ' '.join(self.accumulated_words)
+        
+        # Need at least some words to attempt a match
+        if len(self.accumulated_words) < 3:
+            return self.current_position
+        
+        # Try to match accumulated words against expected sentence
+        matcher = SequenceMatcher(None, self.accumulated_words, expected_words)
+        ratio = matcher.ratio()
+        
         if DEBUG:
-            print(f"  Match: {self.current_position} -> {best_match_pos} (ratio: {best_ratio:.2f}, window: {best_window_size})")
-            if best_match_pos < len(self.script_words):
-                context_start = max(0, best_match_pos - 5)
-                context_end = min(len(self.script_words), best_match_pos + 5)
-                print(f"  Script context: ...{' '.join(self.script_words[context_start:context_end])}...")
-                print(f"  Recognized (last {min(10, len(self.recognized_words))}): {' '.join(self.recognized_words[-10:])}")
+            print(f"\n  Sentence matching:")
+            print(f"    Expected ({len(expected_words)} words): {expected_text[:60]}...")
+            print(f"    Accumulated ({len(self.accumulated_words)} words): {accumulated_text[:60]}...")
+            print(f"    Similarity: {ratio:.2f}")
         
-        return best_match_pos
+        # High threshold for sentence matching - must be very close
+        # This prevents advancing on partial matches or wrong content
+        threshold = 0.70
+        
+        # Also require that we have accumulated enough words (at least 70% of expected sentence length)
+        min_length_ratio = 0.70
+        length_ratio = len(self.accumulated_words) / len(expected_words) if expected_words else 0
+        
+        if ratio >= threshold and length_ratio >= min_length_ratio:
+            # Match found! Advance to end of this sentence
+            print(f"✓ Sentence match! Advancing from word {self.current_position} to {sentence_end}")
+            self.current_sentence_idx += 1
+            self.accumulated_words.clear()  # Clear buffer for next sentence
+            return sentence_end
+        
+        # Not enough match yet - keep accumulating
+        # But if we've accumulated way more words than expected, something's wrong
+        if len(self.accumulated_words) > len(expected_words) * 1.5:
+            # We've said too much without matching - likely user went off-script
+            # Clear and start fresh with just the most recent words
+            if DEBUG:
+                print(f"  Accumulated too many words without match ({len(self.accumulated_words)} vs {len(expected_words)} expected)")
+                print(f"  Keeping last {len(expected_words)} words and continuing...")
+            self.accumulated_words = self.accumulated_words[-len(expected_words):]
+        
+        return self.current_position
     
     def check_and_execute_commands(self, position):
         """Check if we've reached any commands and execute them."""
@@ -414,30 +393,34 @@ class RealtimeListener:
             normalized_words = normalize_text_for_matching(raw_text)
             
             if normalized_words:
+                # Add to both full history and sentence accumulator
                 self.recognized_words.extend(normalized_words)
+                self.accumulated_words.extend(normalized_words)
                 
                 print(f"Recognized: {raw_text}")
                 if DEBUG:
                     print(f"  Normalized: {' '.join(normalized_words)}")
                     print(f"  Total words recognized: {len(self.recognized_words)}")
+                    print(f"  Accumulated for matching: {len(self.accumulated_words)}")
                 
-                # Update position
+                # Update position (tries to match accumulated words to next sentence)
                 new_position = self.find_position_in_script()
                 
                 # Show progress and next words to say
                 if new_position > self.current_position:
-                    # Calculate what to show next
-                    next_words_start = new_position
-                    next_words_end = min(len(self.script_words), new_position + 15)
-                    next_words = ' '.join(self.script_words[next_words_start:next_words_end])
+                    # Get next sentence to say
+                    next_sentence_text = ""
+                    if self.current_sentence_idx < len(self.sentences):
+                        _, _, next_sentence_text = self.sentences[self.current_sentence_idx]
+                        # Show first 80 chars
+                        if len(next_sentence_text) > 80:
+                            next_sentence_text = next_sentence_text[:80] + "..."
                     
                     progress_pct = int((new_position / len(self.script_words)) * 100) if len(self.script_words) > 0 else 0
                     print(f"Progress: {self.current_position} → {new_position} / {len(self.script_words)} words ({progress_pct}%)")
                     
-                    if next_words_end < len(self.script_words):
-                        print(f"  Next: {next_words}...")
-                    elif next_words:
-                        print(f"  Next: {next_words} [END]")
+                    if next_sentence_text:
+                        print(f"  Say next: {next_sentence_text}")
                     else:
                         print(f"  ✓ Script complete!")
                     
@@ -463,21 +446,30 @@ class RealtimeListener:
         text_surface = self.font.render(position_text, True, (200, 200, 200))
         self.screen.blit(text_surface, (10, y))
         
-        # Recent words heard
+        # Sentence progress
         y += 40
-        recent = ' '.join(self.recognized_words[-5:])
-        heard_text = f"Heard: {recent}"
+        sentence_text = f"Sentence: {self.current_sentence_idx + 1}/{len(self.sentences)}"
+        text_surface = self.small_font.render(sentence_text, True, (150, 150, 200))
+        self.screen.blit(text_surface, (10, y))
+        
+        # Accumulated words for current sentence
+        y += 35
+        accumulated = ' '.join(self.accumulated_words[-8:])  # Show last 8 words
+        if len(self.accumulated_words) > 8:
+            accumulated = "..." + accumulated
+        heard_text = f"Accumulated: {accumulated}" if accumulated else "Accumulated: (waiting...)"
         text_surface = self.small_font.render(heard_text, True, (100, 200, 100))
         self.screen.blit(text_surface, (10, y))
         
-        # Next words to say (helpful prompt)
+        # Next sentence to say (helpful prompt)
         y += 35
-        if self.current_position < len(self.script_words):
-            next_end = min(len(self.script_words), self.current_position + 10)
-            next_words = ' '.join(self.script_words[self.current_position:next_end])
-            if next_end < len(self.script_words):
-                next_words += "..."
-            next_text = f"Say next: {next_words}"
+        if self.current_sentence_idx < len(self.sentences):
+            _, _, next_sentence_text = self.sentences[self.current_sentence_idx]
+            # Truncate if too long (fit in window width)
+            max_chars = 80
+            if len(next_sentence_text) > max_chars:
+                next_sentence_text = next_sentence_text[:max_chars] + "..."
+            next_text = f"Say next: {next_sentence_text}"
             text_surface = self.small_font.render(next_text, True, (255, 215, 0))  # Gold color
             self.screen.blit(text_surface, (10, y))
         else:
@@ -500,11 +492,48 @@ class RealtimeListener:
         
         pygame.display.flip()
     
+    def advance_to_next_sentence(self):
+        """Manually advance to the next sentence (for testing/manual control)."""
+        if self.current_sentence_idx >= len(self.sentences):
+            print("Already at end of script")
+            return
+        
+        # Get current sentence end position
+        _, sentence_end, sentence_text = self.sentences[self.current_sentence_idx]
+        
+        print(f"\n>>> ADVANCING TO NEXT SENTENCE <<<")
+        print(f"  Skipping: {sentence_text[:60]}...")
+        
+        # Move to end of current sentence
+        self.current_position = sentence_end
+        self.current_sentence_idx += 1
+        self.accumulated_words.clear()
+        
+        # Execute any commands we passed
+        self.check_and_execute_commands(self.current_position)
+        
+        # Show next sentence
+        if self.current_sentence_idx < len(self.sentences):
+            _, _, next_sentence_text = self.sentences[self.current_sentence_idx]
+            print(f"  Next: {next_sentence_text[:60]}...")
+        else:
+            print("  ✓ Reached end of script!")
+        
+        # Update UI
+        self.ws_client.send_position(
+            self.current_position,
+            len(self.script_words),
+            self.script_words,
+            self.plain_text
+        )
+    
     def reset(self):
         """Reset recognition state."""
         print("\n>>> RESET <<<")
         self.recognized_words = []
+        self.accumulated_words = []
         self.current_position = 0
+        self.current_sentence_idx = 0
         self.executed_commands = set()
         self.recognizer.reset()
         
@@ -529,6 +558,7 @@ class RealtimeListener:
         print(f"Words: {len(self.script_words)}")
         print(f"Commands: {len(self.commands)}")
         print("\nControls:")
+        print("  SPACE - Manually advance to next sentence")
         print("  R - Reset recognition")
         print("  Q - Quit")
         print("="*60)
@@ -556,6 +586,8 @@ class RealtimeListener:
                             running = False
                         elif event.key == pygame.K_r:
                             self.reset()
+                        elif event.key == pygame.K_SPACE:
+                            self.advance_to_next_sentence()
                 
                 # Process audio
                 self.process_audio()
