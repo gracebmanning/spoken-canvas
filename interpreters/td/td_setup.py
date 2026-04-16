@@ -11,8 +11,8 @@ import os
 parent = me.parent()   # type: ignore
 project = td.project    # type: ignore
 
-WS_ADDRESS = "ws://localhost"
-WS_PORT = 5000
+WS_ADDRESS = "ws://localhost/ws"
+WS_PORT = 8000
 # API_FILE_PATH = os.path.join(project.folder, "..", "Scripts", "td_realtime_api.py")  # type: ignore
 
 
