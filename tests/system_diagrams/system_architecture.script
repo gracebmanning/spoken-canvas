@@ -1,0 +1,37 @@
+This is the system architecture for the real-time voice-controlled animation system. [let c1 = circle(10, "black")] [scale(c1,100,1)]
+
+The system has three main components.  First, there's the listener. [box(300, 150, "cyan", 400, 300, 3)] [text("LISTENER", 400, 270, 28, "cyan")] [text("(listen.py)", 400, 310, 18, "white")]
+
+The listener uses speech recognition. [text("• Vosk or Whisper", 400, 340, 16, "lightgray")]
+
+It captures your voice. [text("• Tracks script position", 400, 360, 16, "lightgray")]
+
+And sends commands to the server. [arrow(550, 300, 750, 300, "yellow", 4)]
+
+Next is the server. [box(300, 150, "green", 900, 300, 3)] [text("SERVER", 900, 270, 28, "green")] [text("(serve.py)", 900, 310, 18, "white")]
+
+The server is the communication hub. [text("• FastAPI WebSocket", 900, 340, 16, "lightgray")]
+
+It relays messages between components. [text("• Broadcasts to all clients", 900, 360, 16, "lightgray")]
+
+The server connects to interpreters. [arrow(900, 425, 900, 550, "yellow", 4)]
+
+Here is the browser interpreter. [box(300, 150, "magenta", 900, 650, 3)] [text("INTERPRETER", 900, 620, 28, "magenta")] [text("(Browser)", 900, 660, 18, "white")]
+
+The interpreter executes drawing commands. [text("• Paper.js graphics", 900, 690, 16, "lightgray")]
+
+And creates animations. [text("• Anime.js animations", 900, 710, 16, "lightgray")]
+
+Messages flow through the system.  When you speak into the microphone, [text("Speech → Recognition → Commands", 400, 500, 20, "yellow")]
+
+The listener recognizes your words.
+
+Commands are extracted from the script. [text("Script: 'draw a circle' [circle(50,'red')]", 400, 550, 18, "orange")]
+
+And sent over WebSocket to the server. 
+
+The server broadcasts to all interpreters. [text("WebSocket broadcasts commands", 900, 500, 20, "yellow")]
+
+The browser receives and executes them. 
+
+Creating beautiful graphics in real time. [circle(100, "red", 1400, 650)] [circle(80, "blue", 1500, 700)] [circle(60, "green", 1300, 700)]
