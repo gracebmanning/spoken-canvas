@@ -13,7 +13,8 @@ project = td.project    # type: ignore
 
 WS_ADDRESS = "ws://localhost/ws"
 WS_PORT = 8000
-# API_FILE_PATH = os.path.join(project.folder, "..", "Scripts", "td_realtime_api.py")  # type: ignore
+
+API_FILE = os.path.join(project.folder, "..", "td_api.py")
 
 
 def _create_op(op_type, name, x=0, y=0):
@@ -69,18 +70,28 @@ def onReceiveText(dat: websocketDAT, rowIndex: int, message: str):
 		rowIndex: The row number the message was placed into
 		message: A unicode representation of the text
 	"""
-	print(message)
 	if message == "ping":
 		dat.sendText("pong")
 		return
+	
 	data = json.loads(message)
-	table = op("incoming_data")
-	# write key and values into a table
-	for key, val in data.items():
-		if table.findCell(key):
-			table.replaceRow(key, [key, val])
-		else:
-			table.appendRow([key, val])
+	
+	# Only handle messages targeted at TD
+	if data.get("target") != "td":
+		return
+	
+	command = data.get("command")
+	print(f"TD received command: {command}")
+	
+	if command == "execute":
+		mod(op("td_api")).handle(data)
+	elif command == "update_position":
+		# Store silently for future use
+		table = op("position_data")
+		table.clear()
+		table.appendRow(["position",   data.get("position", 0)])
+		table.appendRow(["totalWords", data.get("totalWords", 0)])
+		table.appendRow(["plainText",  data.get("plainText", "")])
 	return
 
 
@@ -128,8 +139,22 @@ def onMonitorMessage(dat: websocketDAT, message: str):
 	"""
 	return
 '''
-# --- EX: SEND DATA TO TD FROM WEB SERVER ---
-incoming_data = _create_op(td.tableDAT, "incoming_data", 0, -300)
+
+# --- TD API ---
+td_api = _create_op(td.textDAT, "td_api", 200, 0)
+td_api.viewer = True
+td_api.par.file = API_FILE
+td_api.par.language = 3  # set language to Python
+td_api.par.syncfile = 1  # set Sync to File on
+
+# --- POSITION DATA ---
+# Silently stores update_position messages for future use
+position_data = _create_op(td.tableDAT, "position_data", 0, -300)
+position_data.viewer = True
+position_data.clear()
+
+# --- INCOMING DATA ---
+incoming_data = _create_op(td.tableDAT, "incoming_data", 0, -500)
 incoming_data.viewer = True
 incoming_data.clear()
 
@@ -140,39 +165,57 @@ dat_to_chop.par.output = 1  # Output = Channel per Row
 dat_to_chop.par.firstrow = 2  # First Row = Values
 dat_to_chop.par.firstcolumn = 1  # First Column = Names
 
-# --- EX: SEND DATA FROM TD TO WEB SERVER ---
-slider = _create_op(td.sliderCOMP, "slider1", 0, -500)
-slider.viewer = True
+# --- COMPOSITE TOP ---
+# All dynamically created shape TOPs connect here for layering
+composite = _create_op(td.compositeTOP, "composite", 800, -500)
+composite.viewer = True
+composite.par.operand = 5  # Over operation
 
-slider_null = _create_op(td.nullCHOP, "slider1_null", 200, -500)
-slider_null.viewer = True
-slider_null.inputConnectors[0].connect(slider.outputConnectors[0])
+# # --- EX: SEND DATA TO TD FROM WEB SERVER ---
+# incoming_data = _create_op(td.tableDAT, "incoming_data", 0, -300)
+# incoming_data.viewer = True
+# incoming_data.clear()
 
-slider_exec = _create_op(td.chopexecuteDAT, "slider1_exec", 400, -500)
-slider_exec.viewer = True
-slider_exec.par.chop = slider_null.name
-slider_exec.par.valuechange = 1  # track when value changes
-slider_exec.text = '''
-import json
+# dat_to_chop = _create_op(td.dattoCHOP, "datto1", 200, -300)
+# dat_to_chop.viewer = True
+# dat_to_chop.par.dat = incoming_data.name
+# dat_to_chop.par.output = 1  # Output = Channel per Row
+# dat_to_chop.par.firstrow = 2  # First Row = Values
+# dat_to_chop.par.firstcolumn = 1  # First Column = Names
 
-ws = op('websocket')
+# # --- EX: SEND DATA FROM TD TO WEB SERVER ---
+# slider = _create_op(td.sliderCOMP, "slider1", 0, -500)
+# slider.viewer = True
 
-def onValueChange(channel: Channel, sampleIndex: int, val: float, 
-				  prev: float):
-	"""
-	Called when a channel value changes.
-	
-	Args:
-		channel: The Channel object which has changed
-		sampleIndex: The index of the changed sample
-		val: The numeric value of the changed sample
-		prev: The previous sample value
-	"""
-	raw_name = channel.owner.name
-	op_name = raw_name.replace("_null", "")
-	
-	data_to_send = {op_name: val}
-	json_string = json.dumps(data_to_send)
-	ws.sendText(json_string)
-	return
-'''
+# slider_null = _create_op(td.nullCHOP, "slider1_null", 200, -500)
+# slider_null.viewer = True
+# slider_null.inputConnectors[0].connect(slider.outputConnectors[0])
+
+# slider_exec = _create_op(td.chopexecuteDAT, "slider1_exec", 400, -500)
+# slider_exec.viewer = True
+# slider_exec.par.chop = slider_null.name
+# slider_exec.par.valuechange = 1  # track when value changes
+# slider_exec.text = '''
+# import json
+
+# ws = op('websocket')
+
+# def onValueChange(channel: Channel, sampleIndex: int, val: float,
+# 				  prev: float):
+# 	"""
+# 	Called when a channel value changes.
+
+# 	Args:
+# 		channel: The Channel object which has changed
+# 		sampleIndex: The index of the changed sample
+# 		val: The numeric value of the changed sample
+# 		prev: The previous sample value
+# 	"""
+# 	raw_name = channel.owner.name
+# 	op_name = raw_name.replace("_null", "")
+
+# 	data_to_send = {op_name: val}
+# 	json_string = json.dumps(data_to_send)
+# 	ws.sendText(json_string)
+# 	return
+# '''
