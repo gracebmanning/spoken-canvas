@@ -386,15 +386,23 @@ class RealtimeListener:
                     print(f"\n>>> Meta-command RESET() triggered at word {command_word_index}")
                     self.executed_commands.add(idx)
                     self.reset()
+
                 elif command_content.strip().startswith("td:"):
                     # Strip the "td:" prefix and send the raw command string to TD
                     raw = command_content.strip()[3:].strip()
                     print(f"\n>>> TD command at word {command_word_index}: [{raw}]")
                     self.ws_client.send_command(raw, target="td")
                     self.executed_commands.add(idx)
+
+                elif command_content.strip().startswith('browser:'):
+                    # Strip the "browser:" prefix and send the raw command string to browser
+                    raw = command_content.strip()[8:].strip()
+                    print(f"\n>>> Browser command at word {command_word_index}: [{raw}]")
+                    self.ws_client.send_command(raw, target="browser")
+                    self.executed_commands.add(idx)
                 else:
                     print(f"\n>>> Executing command at word {command_word_index}: [{command_content}]")
-                    self.ws_client.send_command(command_content)
+                    self.ws_client.send_command(command_content, target="browser")
                     self.executed_commands.add(idx)
 
     def process_audio(self):
