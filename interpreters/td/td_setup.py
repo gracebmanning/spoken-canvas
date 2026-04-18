@@ -17,18 +17,18 @@ WS_PORT = 8000
 API_FILE = os.path.join(project.folder, "..", "td_api.py")
 
 
-def _create_op(op_type, name, x=0, y=0):
-    existing = parent.op(name)
+def _create_op(op_type, name, x=0, y=0, parent_op=parent):
+    existing = parent_op.op(name)
     if existing:
         existing.destroy()
-    node = parent.create(op_type, name)
+    node = parent_op.create(op_type, name)
     node.nodeX = x
     node.nodeY = y
     return node
 
 
-def _get_op(name):
-    return parent.op(name)
+def _get_op(name, parent_op=parent):
+    return parent_op.op(name)
 
 
 # --- WEB SOCKET SETUP ---
@@ -158,18 +158,39 @@ incoming_data = _create_op(td.tableDAT, "incoming_data", 0, -500)
 incoming_data.viewer = True
 incoming_data.clear()
 
-dat_to_chop = _create_op(td.dattoCHOP, "datto1", 200, -300)
+dat_to_chop = _create_op(td.dattoCHOP, "datto1", 200, -500)
 dat_to_chop.viewer = True
 dat_to_chop.par.dat = incoming_data.name
 dat_to_chop.par.output = 1  # Output = Channel per Row
 dat_to_chop.par.firstrow = 2  # First Row = Values
 dat_to_chop.par.firstcolumn = 1  # First Column = Names
 
-# --- COMPOSITE TOP ---
-# All dynamically created shape TOPs connect here for layering
-composite = _create_op(td.compositeTOP, "composite", 800, -500)
-composite.viewer = True
-composite.par.operand = 5  # Over operation
+# --- SHAPES CONTAINER ---
+shapes_container = _create_op(td.baseCOMP, "shapes", 400, -500)
+shapes_container.viewer = True
+
+shapes_data_in = _create_op(td.inCHOP, "shapes_data_in", -475, 0, shapes_container)
+shapes_data_in.viewer = True
+
+shapes_camera = _create_op(td.cameraCOMP, "camera", 0, 0, shapes_container)
+shapes_camera.viewer = True
+
+shapes_light = _create_op(td.lightCOMP, "light", 250, 0, shapes_container)
+shapes_light.viewer = True
+
+shapes_composite = _create_op(td.compositeTOP, "shapes_composite", 725, -175, shapes_container)
+shapes_composite.viewer = True
+shapes_composite.par.operand = 5  # Over operation
+
+shapes_out = _create_op(td.outTOP, "shapes_out", 975, -175, shapes_container)
+shapes_out.viewer = True
+shapes_out.setInputs([shapes_composite])
+
+shapes_final_out = _create_op(td.outTOP, "shapes_final_out", 600, -500)
+shapes_final_out.viewer = True
+shapes_final_out.inputConnectors[0].connect(shapes_container.outputConnectors[0])
+
+shapes_container.inputConnectors[0].connect(dat_to_chop.outputConnectors[0])
 
 # # --- EX: SEND DATA TO TD FROM WEB SERVER ---
 # incoming_data = _create_op(td.tableDAT, "incoming_data", 0, -300)
