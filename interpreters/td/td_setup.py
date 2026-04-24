@@ -192,6 +192,13 @@ shapes_final_out.inputConnectors[0].connect(shapes_container.outputConnectors[0]
 
 shapes_container.inputConnectors[0].connect(dat_to_chop.outputConnectors[0])
 
+# --- SEND VISUALS TO OBS VIA NDI ---
+ndi_out = _create_op(td.ndioutTOP, "NDI_out", 800, -500)
+ndi_out.par.active = 1
+ndi_out.par.name = "TouchDesigner"
+ndi_out.par.includealpha = 1
+ndi_out.inputConnectors[0].connect(shapes_final_out.outputConnectors[0])
+
 # # --- EX: SEND DATA TO TD FROM WEB SERVER ---
 # incoming_data = _create_op(td.tableDAT, "incoming_data", 0, -300)
 # incoming_data.viewer = True

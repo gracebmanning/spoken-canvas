@@ -211,6 +211,16 @@ def _create_sop(op_type, parent_comp):
     geo.viewer = True
     geo.nodeX = 0
     geo.nodeY = 0
+    geo.render = True
+    geo.display = True
+    for child in geo.findChildren(depth=1):
+        child.destroy()
+    inSOP = geo.create(td.inSOP)
+    outSOP = geo.create(td.outSOP)
+    outSOP.nodeX = 200
+    outSOP.setInputs([inSOP])
+    outSOP.render = True
+    outSOP.display = True
     geo.inputConnectors[0].connect(transform.outputConnectors[0])
 
     mat = parent_comp.create(td.phongMAT)
@@ -242,49 +252,6 @@ def _create_sop(op_type, parent_comp):
 # ============================================================
 
 
-# def circle(radius, color='white'):
-#     """
-#     Create a Circle TOP and connect it to the Composite TOP.
-
-#     Args:
-#         radius: Radius in pixels
-#         color:  Color name (e.g. 'red') or CSS hex string (e.g. '#FF0000')
-
-#     Returns:
-#         The created circleTOP operator, so it can be stored in the
-#         exec namespace for use in later commands (e.g. move, fade).
-
-#     Radius normalization:
-#         TD's Circle TOP radius is 0-1 relative to half the shorter canvas
-#         dimension. At 1920x1080, shorter side = 1080, half = 540:
-#             radius_norm = radius_px / 540.0
-#     """
-#     name = _auto_name('circle')
-#     color_rgb = parse_color(color)
-#     radius_norm = radius / 540.0
-
-#     shapes = parent.fetch('td_shapes', [])
-#     node_x = len(shapes) * 200
-
-#     existing = parent.op(name)
-#     if existing:
-#         existing.destroy()
-
-#     circle_top = parent.create(td.circleTOP, name)
-#     circle_top.nodeX = node_x
-#     circle_top.nodeY = -800
-#     circle_top.viewer = True
-#     circle_top.par.radius = radius_norm
-#     circle_top.par.fillcolorr = color_rgb[0]
-#     circle_top.par.fillcolorg = color_rgb[1]
-#     circle_top.par.fillcolorb = color_rgb[2]
-
-#     shapes.insert(0, name)
-#     parent.store('td_shapes', shapes)
-#     _rebuild_composite(parent)
-
-#     return circle_top
-
 def box(size=1.0, color='white'):
     """
     Create a Box SOP inside a Base COMP and connect it to shapes_composite.
@@ -303,7 +270,7 @@ def box(size=1.0, color='white'):
     color_rgb = parse_color(color)
 
     shapes = parent.fetch('td_shapes', [])
-    node_y = len(shapes) * -200
+    node_y = (len(shapes) + 1) * -200
 
     # Destroy any existing operator with the same name (re-run safety)
     existing = shapes_container.op(name)
