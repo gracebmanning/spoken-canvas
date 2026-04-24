@@ -171,6 +171,7 @@ shapes_container.viewer = True
 
 shapes_data_in = _create_op(td.inCHOP, "shapes_data_in", -475, 0, shapes_container)
 shapes_data_in.viewer = True
+shapes_container.inputConnectors[0].connect(dat_to_chop.outputConnectors[0])
 
 shapes_camera = _create_op(td.cameraCOMP, "camera", 0, 0, shapes_container)
 shapes_camera.viewer = True
@@ -190,14 +191,18 @@ shapes_final_out = _create_op(td.outTOP, "shapes_final_out", 600, -500)
 shapes_final_out.viewer = True
 shapes_final_out.inputConnectors[0].connect(shapes_container.outputConnectors[0])
 
-shapes_container.inputConnectors[0].connect(dat_to_chop.outputConnectors[0])
-
 # --- SEND VISUALS TO OBS VIA NDI ---
 ndi_out = _create_op(td.ndioutTOP, "NDI_out", 800, -500)
 ndi_out.par.active = 1
 ndi_out.par.name = "TouchDesigner"
 ndi_out.par.includealpha = 1
 ndi_out.inputConnectors[0].connect(shapes_final_out.outputConnectors[0])
+
+# --- CAPTURE MIC AUDIO AND SEND TO SHAPES ---
+audio_dev_in = _create_op(td.audiodeviceinCHOP, "audio_dev_in", 0, -700)
+audio_dev_in.viewer = True
+sound_data_in = _create_op(td.inCHOP, "sound_data_in", -475, -200, shapes_container)
+shapes_container.inputConnectors[1].connect(audio_dev_in.outputConnectors[0])
 
 # # --- EX: SEND DATA TO TD FROM WEB SERVER ---
 # incoming_data = _create_op(td.tableDAT, "incoming_data", 0, -300)
