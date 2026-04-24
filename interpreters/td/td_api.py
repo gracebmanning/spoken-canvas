@@ -91,11 +91,12 @@ def _get_namespace():
     namespace.update({
         'box':   box,
         'clear': clear,
+        'move': move,
+        'rotate': rotate,
         # Future functions registered here:
         # 'sphere': sphere,
         # 'torus':  torus,
         # 'tube':   tube,
-        # 'move':   move,
         # 'remove': remove,
     })
 
@@ -245,6 +246,23 @@ def _create_sop(op_type, parent_comp):
 
     return out
 
+
+def _set_par(par, value):
+    """
+    Set a parameter to either a constant value or a TD expression string.
+
+    Args:
+        par:   A TouchDesigner parameter object (e.g. transform.par.tx)
+        value: A numeric value (int or float) or a TD expression string
+               (e.g. "me.time.frame * 0.1")
+    """
+    if isinstance(value, str):
+        par.mode = ParMode.EXPRESSION  # type: ignore
+        par.expr = value
+    else:
+        par.mode = ParMode.CONSTANT    # type: ignore
+        par.val = value
+
 # ============================================================
 # SHAPE COMMANDS
 # These functions are injected into the exec namespace and called
@@ -306,6 +324,72 @@ def box(size=1.0, color='white'):
     _rebuild_composite()
 
     return box_base
+
+
+def move(shape, x=0.0, y=0.0, z=0.0):
+    """
+    Translate a shape by setting its Transform SOP translation parameters.
+
+    Args:
+        shape: The Base COMP returned by a shape creation function (e.g. box())
+        x:     Translation along the X axis in SOP units (default 0.0)
+        y:     Translation along the Y axis in SOP units (default 0.0)
+        z:     Translation along the Z axis in SOP units (default 0.0)
+
+    Returns:
+        The same Base COMP, so calls can be chained if needed.
+
+    Example:
+        b1 = box(0.5, 'blue')
+        move(b1, 1.0, 0.5, 0.0)
+    """
+    if shape is None:
+        print("TD API move(): received None shape")
+        return
+
+    transform = shape.op('transform1')
+    if not transform:
+        print(f"TD API move(): transform1 not found inside {shape.name}")
+        return
+
+    _set_par(transform.par.tx, x)
+    _set_par(transform.par.ty, y)
+    _set_par(transform.par.tz, z)
+
+    return shape
+
+
+def rotate(shape, rx=0.0, ry=0.0, rz=0.0):
+    """
+    Rotate a shape by setting its Transform SOP rotation parameters.
+
+    Args:
+        shape: The Base COMP returned by a shape creation function (e.g. box())
+        rx:    Rotation around the X axis in degrees (default 0.0)
+        ry:    Rotation around the Y axis in degrees (default 0.0)
+        rz:    Rotation around the Z axis in degrees (default 0.0)
+
+    Returns:
+        The same Base COMP, so calls can be chained if needed.
+
+    Example:
+        b1 = box(0.5, 'red')
+        rotate(b1, 0, 45, 0)   # rotate 45 degrees around Y axis
+    """
+    if shape is None:
+        print("TD API rotate(): received None shape")
+        return
+
+    transform = shape.op('transform1')
+    if not transform:
+        print(f"TD API rotate(): transform1 not found inside {shape.name}")
+        return
+
+    _set_par(transform.par.rx, rx)
+    _set_par(transform.par.ry, ry)
+    _set_par(transform.par.rz, rz)
+
+    return shape
 
 # ============================================================
 # UTILITY COMMANDS
