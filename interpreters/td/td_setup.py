@@ -180,7 +180,7 @@ shapes_light.viewer = True
 
 shapes_composite = _create_op(td.compositeTOP, "shapes_composite", 725, -175, shapes_container)
 shapes_composite.viewer = True
-shapes_composite.par.operand = 5  # Over operation
+shapes_composite.par.operand = 31  # Over operation
 
 shapes_out = _create_op(td.outTOP, "shapes_out", 975, -175, shapes_container)
 shapes_out.viewer = True
