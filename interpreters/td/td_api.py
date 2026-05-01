@@ -90,13 +90,12 @@ def _get_namespace():
     # Always repopulate API functions in case the DAT was reloaded
     namespace.update({
         'box':   box,
+        'sphere': sphere,
+        'torus':  torus,
+        'tube':   tube,
         'clear': clear,
         'move': move,
         'rotate': rotate,
-        # Future functions registered here:
-        # 'sphere': sphere,
-        # 'torus':  torus,
-        # 'tube':   tube,
         # 'remove': remove,
     })
 
@@ -270,7 +269,7 @@ def _set_par(par, value):
 # ============================================================
 
 
-def box(size=1.0, color='white'):
+def box(sizex=1.0, sizey=None, sizez=None, color='white'):
     """
     Create a Box SOP inside a Base COMP and connect it to shapes_composite.
 
@@ -282,6 +281,12 @@ def box(size=1.0, color='white'):
         The Base COMP, so it can be stored in the exec namespace for use
         in later commands (e.g. move, remove).
     """
+    if sizey is None:
+        sizey = sizex
+
+    if sizez is None:
+        sizez = sizex
+
     parent = me.parent()    # type: ignore
     shapes_container = parent.op('shapes')
     name = _auto_name('box')
@@ -304,12 +309,12 @@ def box(size=1.0, color='white'):
     # Build the SOP chain inside the Base COMP
     _create_sop(td.boxSOP, box_base)
 
-    # Apply uniform size to the Box SOP across all three axes
+    # Apply size to the Box SOP across all three axes
     box_sop = box_base.op('box1')
     if box_sop:
-        box_sop.par.sizex = size
-        box_sop.par.sizey = size
-        box_sop.par.sizez = size
+        box_sop.par.sizex = sizex
+        box_sop.par.sizey = sizey
+        box_sop.par.sizez = sizez
 
     # Apply color to the Phong material
     mat = box_base.op('phong1')
@@ -324,6 +329,149 @@ def box(size=1.0, color='white'):
     _rebuild_composite()
 
     return box_base
+
+
+def sphere(radx=0.5, rady=None, radz=None, color='white'):
+    if rady is None:
+        rady = radx
+
+    if radz is None:
+        radz = radx
+
+    parent = me.parent()    # type: ignore
+    shapes_container = parent.op('shapes')
+    name = _auto_name('sphere')
+    color_rgb = parse_color(color)
+
+    shapes = parent.fetch('td_shapes', [])
+    node_y = (len(shapes) + 1) * -200
+
+    # Destroy any existing operator with the same name (re-run safety)
+    existing = shapes_container.op(name)
+    if existing:
+        existing.destroy()
+
+    # Create Base COMP container for this shape
+    sphere_base = shapes_container.create(td.baseCOMP, name)
+    sphere_base.nodeX = 0
+    sphere_base.nodeY = node_y
+    sphere_base.viewer = True
+
+    # Build the SOP chain inside the Base COMP
+    _create_sop(td.sphereSOP, sphere_base)
+
+    # Apply uniform size to the Sphere SOP across all three axes
+    sphere_sop = sphere_base.op('sphere1')
+    if sphere_sop:
+        sphere_sop.par.radx = radx
+        sphere_sop.par.rady = rady
+        sphere_sop.par.radz = radz
+
+    # Apply color to the Phong material
+    mat = sphere_base.op('phong1')
+    if mat:
+        mat.par.diffr = color_rgb[0]
+        mat.par.diffg = color_rgb[1]
+        mat.par.diffb = color_rgb[2]
+
+    # Track shape — newest first so it renders on top in the composite
+    shapes.insert(0, name)
+    parent.store('td_shapes', shapes)
+    _rebuild_composite()
+
+    return sphere_base
+
+
+def torus(radx=0.5, rady=0.25, color='white'):
+    parent = me.parent()    # type: ignore
+    shapes_container = parent.op('shapes')
+    name = _auto_name('torus')
+    color_rgb = parse_color(color)
+
+    shapes = parent.fetch('td_shapes', [])
+    node_y = (len(shapes) + 1) * -200
+
+    # Destroy any existing operator with the same name (re-run safety)
+    existing = shapes_container.op(name)
+    if existing:
+        existing.destroy()
+
+    # Create Base COMP container for this shape
+    torus_base = shapes_container.create(td.baseCOMP, name)
+    torus_base.nodeX = 0
+    torus_base.nodeY = node_y
+    torus_base.viewer = True
+
+    # Build the SOP chain inside the Base COMP
+    _create_sop(td.torusSOP, torus_base)
+
+    # Apply uniform size to the Torus SOP across all three axes
+    torus_sop = torus_base.op('torus1')
+    if torus_sop:
+        torus_sop.par.radx = radx
+        torus_sop.par.rady = rady
+
+    # Apply color to the Phong material
+    mat = torus_base.op('phong1')
+    if mat:
+        mat.par.diffr = color_rgb[0]
+        mat.par.diffg = color_rgb[1]
+        mat.par.diffb = color_rgb[2]
+
+    # Track shape — newest first so it renders on top in the composite
+    shapes.insert(0, name)
+    parent.store('td_shapes', shapes)
+    _rebuild_composite()
+
+    return torus_base
+
+
+def tube(rad1=0.5, rad2=None, height=0.5, color='white'):
+    if rad2 is None:
+        rad2 = rad1
+
+    parent = me.parent()    # type: ignore
+    shapes_container = parent.op('shapes')
+    name = _auto_name('tube')
+    color_rgb = parse_color(color)
+
+    shapes = parent.fetch('td_shapes', [])
+    node_y = (len(shapes) + 1) * -200
+
+    # Destroy any existing operator with the same name (re-run safety)
+    existing = shapes_container.op(name)
+    if existing:
+        existing.destroy()
+
+    # Create Base COMP container for this shape
+    tube_base = shapes_container.create(td.baseCOMP, name)
+    tube_base.nodeX = 0
+    tube_base.nodeY = node_y
+    tube_base.viewer = True
+
+    # Build the SOP chain inside the Base COMP
+    _create_sop(td.tubeSOP, tube_base)
+
+    # Apply uniform size to the tube SOP across all three axes
+    tube_sop = tube_base.op('tube1')
+    if tube_sop:
+        tube_sop.par.rad1 = rad1
+        tube_sop.par.rad2 = rad2
+        tube_sop.par.height = height
+
+    # Apply color to the Phong material
+    mat = tube_base.op('phong1')
+    if mat:
+        mat.par.diffr = color_rgb[0]
+        mat.par.diffg = color_rgb[1]
+        mat.par.diffb = color_rgb[2]
+
+    # Track shape — newest first so it renders on top in the composite
+    shapes.insert(0, name)
+    parent.store('td_shapes', shapes)
+    _rebuild_composite()
+
+    return tube_base
 
 
 def move(shape, x=0.0, y=0.0, z=0.0):
