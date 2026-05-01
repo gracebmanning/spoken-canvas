@@ -199,10 +199,35 @@ ndi_out.par.includealpha = 1
 ndi_out.inputConnectors[0].connect(shapes_final_out.outputConnectors[0])
 
 # --- CAPTURE MIC AUDIO AND SEND TO SHAPES ---
-audio_dev_in = _create_op(td.audiodeviceinCHOP, "audio_dev_in", 0, -700)
+audio_analysis = _create_op(td.baseCOMP, "audio_analysis", 0, -700)
+
+audio_dev_in = _create_op(td.audiodeviceinCHOP, "audio_dev_in", 0, 0, audio_analysis)
 audio_dev_in.viewer = True
+
+audio_analyze = _create_op(td.analyzeCHOP, "analyze1", 200, 0, audio_analysis)
+audio_analyze.viewer = True
+audio_analyze.par.function = 6  # Function = RMS Power
+audio_analyze.setInputs([audio_dev_in])
+
+# Math: From (0, 0.1) and To (0, 1)
+audio_math = _create_op(td.mathCHOP, "math1", 400, 0, audio_analysis)
+audio_math.viewer = True
+audio_math.par.fromrange2 = 0.1
+audio_math.setInputs([audio_analyze])
+
+audio_lag = _create_op(td.lagCHOP, "lag1", 600, 0, audio_analysis)
+audio_lag.viewer = True
+audio_lag.par.lag1 = 0.1
+audio_lag.par.lag2 = 0.1
+audio_lag.inputConnectors[0].connect(audio_math.outputConnectors[0])
+
+audio_out = _create_op(td.outCHOP, "out1", 800, 0, audio_analysis)
+audio_out.setInputs([audio_lag])
+
+# connect to shapes container
 sound_data_in = _create_op(td.inCHOP, "sound_data_in", -475, -200, shapes_container)
-shapes_container.inputConnectors[1].connect(audio_dev_in.outputConnectors[0])
+sound_data_in.viewer = True
+shapes_container.inputConnectors[1].connect(audio_analysis.outputConnectors[0])
 
 # # --- EX: SEND DATA TO TD FROM WEB SERVER ---
 # incoming_data = _create_op(td.tableDAT, "incoming_data", 0, -300)
