@@ -496,16 +496,20 @@ def move(shape, x=0.0, y=0.0, z=0.0):
         print("TD API move(): received None shape")
         return
 
-    transform = shape.op('transform1')
-    if not transform:
-        print(f"TD API move(): transform1 not found inside {shape.name}")
-        return
+    try:
+        transform = shape.op('transform1')
+        if not transform:
+            print(f"TD API move(): transform1 not found inside {shape.name}")
+            return
 
-    _set_par(transform.par.tx, x)
-    _set_par(transform.par.ty, y)
-    _set_par(transform.par.tz, z)
+        _set_par(transform.par.tx, x)
+        _set_par(transform.par.ty, y)
+        _set_par(transform.par.tz, z)
 
-    return shape
+        return shape
+
+    except Exception as e:
+        print(f"TD API move(): error processing shape — {e}")
 
 
 def rotate(shape, rx=0.0, ry=0.0, rz=0.0):
@@ -529,16 +533,20 @@ def rotate(shape, rx=0.0, ry=0.0, rz=0.0):
         print("TD API rotate(): received None shape")
         return
 
-    transform = shape.op('transform1')
-    if not transform:
-        print(f"TD API rotate(): transform1 not found inside {shape.name}")
-        return
+    try:
+        transform = shape.op('transform1')
+        if not transform:
+            print(f"TD API rotate(): transform1 not found inside {shape.name}")
+            return
 
-    _set_par(transform.par.rx, rx)
-    _set_par(transform.par.ry, ry)
-    _set_par(transform.par.rz, rz)
+        _set_par(transform.par.rx, rx)
+        _set_par(transform.par.ry, ry)
+        _set_par(transform.par.rz, rz)
 
-    return shape
+        return shape
+
+    except Exception as e:
+        print(f"TD API rotate(): error processing shape — {e}")
 
 
 def remove(shape):
@@ -561,27 +569,31 @@ def remove(shape):
         print("TD API remove(): received None shape")
         return
 
-    parent = me.parent()    # type: ignore
-    shapes_container = parent.op('shapes')
-    shapes = parent.fetch('td_shapes', [])
-    name = shape.name
+    try:
+        parent = me.parent()    # type: ignore
+        shapes_container = parent.op('shapes')
+        shapes = parent.fetch('td_shapes', [])
+        name = shape.name
 
-    # Remove from tracking list
-    if name in shapes:
-        shapes.remove(name)
-        parent.store('td_shapes', shapes)
-    else:
-        print(f"TD API remove(): '{name}' not found in td_shapes tracking list")
+        # Remove from tracking list
+        if name in shapes:
+            shapes.remove(name)
+            parent.store('td_shapes', shapes)
+        else:
+            print(f"TD API remove(): '{name}' not found in td_shapes tracking list")
 
-    # Destroy the Base COMP
-    existing = shapes_container.op(name)
-    if existing:
-        existing.destroy()
-    else:
-        print(f"TD API remove(): operator '{name}' not found in shapes container")
+        # Destroy the Base COMP
+        existing = shapes_container.op(name)
+        if existing:
+            existing.destroy()
+        else:
+            print(f"TD API remove(): operator '{name}' not found in shapes container")
 
-    # Rebuild composite without the removed shape
-    _rebuild_composite()
+        # Rebuild composite without the removed shape
+        _rebuild_composite()
+
+    except Exception as e:
+        print(f"TD API remove(): error processing shape — {e}")
 
 
 def audio_reactive(*shapes, low=0.8, high=1.0):
@@ -616,19 +628,23 @@ def audio_reactive(*shapes, low=0.8, high=1.0):
             print("TD API audio_reactive(): received None shape, skipping")
             continue
 
-        transform = shape.op('transform1')
-        if not transform:
-            print(f"TD API audio_reactive(): transform1 not found inside {shape.name}")
-            continue
+        try:
+            transform = shape.op('transform1')
+            if not transform:
+                print(f"TD API audio_reactive(): transform1 not found inside {shape.name}")
+                continue
 
-        transform.par.sx.mode = ParMode.EXPRESSION  # type: ignore
-        transform.par.sx.expr = expr
-        transform.par.sy.mode = ParMode.EXPRESSION  # type: ignore
-        transform.par.sy.expr = expr
-        transform.par.sz.mode = ParMode.EXPRESSION  # type: ignore
-        transform.par.sz.expr = expr
+            transform.par.sx.mode = ParMode.EXPRESSION  # type: ignore
+            transform.par.sx.expr = expr
+            transform.par.sy.mode = ParMode.EXPRESSION  # type: ignore
+            transform.par.sy.expr = expr
+            transform.par.sz.mode = ParMode.EXPRESSION  # type: ignore
+            transform.par.sz.expr = expr
 
-        print(f"TD API audio_reactive(): '{shape.name}' now reactive (low={low}, high={high})")
+            print(f"TD API audio_reactive(): '{shape.name}' now reactive (low={low}, high={high})")
+
+        except Exception as e:
+            print(f"TD API audio_reactive(): error processing shape, skipping — {e}")
 
 # ============================================================
 # UTILITY COMMANDS
