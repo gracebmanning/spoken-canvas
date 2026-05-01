@@ -96,7 +96,7 @@ def _get_namespace():
         'clear': clear,
         'move': move,
         'rotate': rotate,
-        # 'remove': remove,
+        'remove': remove,
     })
 
     return namespace
@@ -109,7 +109,7 @@ def _save_namespace(namespace):
     on each call to _get_namespace().
     """
     parent = me.parent()    # type: ignore
-    api_keys = {'box', 'clear'}
+    api_keys = {'box', 'sphere', 'torus', 'tube', 'move', 'rotate', 'remove', 'clear'}
     saveable = {k: v for k, v in namespace.items()
                 if k not in api_keys and not k.startswith('__')}
     parent.store('td_namespace', saveable)
@@ -538,6 +538,49 @@ def rotate(shape, rx=0.0, ry=0.0, rz=0.0):
     _set_par(transform.par.rz, rz)
 
     return shape
+
+
+def remove(shape):
+    """
+    Destroy a single shape Base COMP and remove it from tracking.
+    Mirrors the browser's remove() function.
+
+    Args:
+        shape: The Base COMP returned by a shape creation function,
+               e.g. the value stored in b1 after b1 = box(0.5, 'red')
+
+    Returns:
+        None — the shape is destroyed and the reference is no longer valid.
+
+    Example:
+        b1 = box(0.5, 'red')
+        remove(b1)
+    """
+    if shape is None:
+        print("TD API remove(): received None shape")
+        return
+
+    parent = me.parent()    # type: ignore
+    shapes_container = parent.op('shapes')
+    shapes = parent.fetch('td_shapes', [])
+    name = shape.name
+
+    # Remove from tracking list
+    if name in shapes:
+        shapes.remove(name)
+        parent.store('td_shapes', shapes)
+    else:
+        print(f"TD API remove(): '{name}' not found in td_shapes tracking list")
+
+    # Destroy the Base COMP
+    existing = shapes_container.op(name)
+    if existing:
+        existing.destroy()
+    else:
+        print(f"TD API remove(): operator '{name}' not found in shapes container")
+
+    # Rebuild composite without the removed shape
+    _rebuild_composite()
 
 # ============================================================
 # UTILITY COMMANDS
