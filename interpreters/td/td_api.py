@@ -264,9 +264,7 @@ def _set_par(par, value):
         par.val = value
 
 # ============================================================
-# SHAPE COMMANDS
-# These functions are injected into the exec namespace and called
-# directly from script commands.
+# API COMMANDS
 # ============================================================
 
 
@@ -549,6 +547,53 @@ def rotate(shape, rx=0.0, ry=0.0, rz=0.0):
         print(f"TD API rotate(): error processing shape — {e}")
 
 
+def audio_reactive(*shapes, low=0.8, high=1.0):
+    """
+    Make one or more shapes pulse in scale with the speaker's voice volume.
+    Reads the normalized RMS audio signal (0→1) from sound_data_in and
+    remaps it to a scale range, applied uniformly to sx, sy, sz on each
+    shape's Transform SOP.
+
+    Args:
+        *shapes: One or more Base COMPs to make audio-reactive.
+                 Accepts any number of positional arguments, e.g.:
+                     audio_reactive(b1)
+                     audio_reactive(s1, b1, tu1)
+        low:  Scale value when silent (default 0.8)
+        high: Scale value at peak volume (default 1.0)
+
+    Examples:
+        audio_reactive(b1)                      # subtle pulse
+        audio_reactive(s1, b1, tu1)             # multiple shapes
+        audio_reactive(b2, low=0.5, high=1.5)   # intense pulse
+    """
+    if not shapes:
+        print("TD API audio_reactive(): no shapes provided")
+        return
+
+    # TD expression that remaps normalized audio (0→1) to desired scale range
+    expr = f"tdu.remap(op('../sound_data_in')['chan1'], 0, 1, {low}, {high})"
+
+    for shape in shapes:
+        if shape is None:
+            print("TD API audio_reactive(): received None shape, skipping")
+            continue
+
+        try:
+            transform = shape.op('transform1')
+            if not transform:
+                print(f"TD API audio_reactive(): transform1 not found inside {shape.name}")
+                continue
+
+            transform.par.scale.mode = ParMode.EXPRESSION  # type: ignore
+            transform.par.scale.expr = expr
+
+            print(f"TD API audio_reactive(): '{shape.name}' now reactive (low={low}, high={high})")
+
+        except Exception as e:
+            print(f"TD API audio_reactive(): error processing shape, skipping — {e}")
+
+
 def remove(shape):
     """
     Destroy a single shape Base COMP and remove it from tracking.
@@ -594,61 +639,6 @@ def remove(shape):
 
     except Exception as e:
         print(f"TD API remove(): error processing shape — {e}")
-
-
-def audio_reactive(*shapes, low=0.8, high=1.0):
-    """
-    Make one or more shapes pulse in scale with the speaker's voice volume.
-    Reads the normalized RMS audio signal (0→1) from sound_data_in and
-    remaps it to a scale range, applied uniformly to sx, sy, sz on each
-    shape's Transform SOP.
-
-    Args:
-        *shapes: One or more Base COMPs to make audio-reactive.
-                 Accepts any number of positional arguments, e.g.:
-                     audio_reactive(b1)
-                     audio_reactive(s1, b1, tu1)
-        low:  Scale value when silent (default 0.8)
-        high: Scale value at peak volume (default 1.0)
-
-    Examples:
-        audio_reactive(b1)                      # subtle pulse
-        audio_reactive(s1, b1, tu1)             # multiple shapes
-        audio_reactive(b2, low=0.5, high=1.5)   # intense pulse
-    """
-    if not shapes:
-        print("TD API audio_reactive(): no shapes provided")
-        return
-
-    # TD expression that remaps normalized audio (0→1) to desired scale range
-    expr = f"tdu.remap(op('../sound_data_in')['chan1'], 0, 1, {low}, {high})"
-
-    for shape in shapes:
-        if shape is None:
-            print("TD API audio_reactive(): received None shape, skipping")
-            continue
-
-        try:
-            transform = shape.op('transform1')
-            if not transform:
-                print(f"TD API audio_reactive(): transform1 not found inside {shape.name}")
-                continue
-
-            transform.par.sx.mode = ParMode.EXPRESSION  # type: ignore
-            transform.par.sx.expr = expr
-            transform.par.sy.mode = ParMode.EXPRESSION  # type: ignore
-            transform.par.sy.expr = expr
-            transform.par.sz.mode = ParMode.EXPRESSION  # type: ignore
-            transform.par.sz.expr = expr
-
-            print(f"TD API audio_reactive(): '{shape.name}' now reactive (low={low}, high={high})")
-
-        except Exception as e:
-            print(f"TD API audio_reactive(): error processing shape, skipping — {e}")
-
-# ============================================================
-# UTILITY COMMANDS
-# ============================================================
 
 
 def clear():

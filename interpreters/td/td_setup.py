@@ -212,7 +212,7 @@ audio_analyze.setInputs([audio_dev_in])
 # Math: From (0, 0.1) and To (0, 1)
 audio_math = _create_op(td.mathCHOP, "math1", 400, 0, audio_analysis)
 audio_math.viewer = True
-audio_math.par.fromrange2 = 0.1
+audio_math.par.fromrange2 = 0.04
 audio_math.setInputs([audio_analyze])
 
 audio_lag = _create_op(td.lagCHOP, "lag1", 600, 0, audio_analysis)
