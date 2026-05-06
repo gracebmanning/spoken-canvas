@@ -93,11 +93,12 @@ def _get_namespace():
         'sphere': sphere,
         'torus':  torus,
         'tube':   tube,
-        'clear': clear,
         'move': move,
         'rotate': rotate,
+        'scale': scale,
+        'audio_reactive': audio_reactive,
         'remove': remove,
-        'audio_reactive': audio_reactive
+        'clear': clear,
     })
 
     return namespace
@@ -110,7 +111,7 @@ def _save_namespace(namespace):
     on each call to _get_namespace().
     """
     parent = me.parent()    # type: ignore
-    api_keys = {'box', 'sphere', 'torus', 'tube', 'move', 'rotate', 'remove', 'clear', 'audio_reactive'}
+    api_keys = {'box', 'sphere', 'torus', 'tube', 'move', 'rotate', 'scale', 'audio_reactive', 'remove', 'clear'}
     saveable = {k: v for k, v in namespace.items()
                 if k not in api_keys and not k.startswith('__')}
     parent.store('td_namespace', saveable)
@@ -545,6 +546,49 @@ def rotate(shape, rx=0.0, ry=0.0, rz=0.0):
 
     except Exception as e:
         print(f"TD API rotate(): error processing shape — {e}")
+
+
+def scale(shape, sx=1.0, sy=None, sz=None):
+    """
+    Scale a shape by setting its Transform SOP per-axis scale parameters.
+    Uses sx/sy/sz, leaving the uniform scale parameter free for audio_reactive().
+
+    Args:
+        shape: The Base COMP returned by a shape creation function
+        sx:    Scale along the X axis (default 1.0)
+        sy:    Scale along the Y axis — defaults to sx if not provided
+        sz:    Scale along the Z axis — defaults to sx if not provided
+
+    Each value can be a number or a TD expression string.
+
+    Examples:
+        scale(b1, 2.0)               # uniform double size
+        scale(b1, 2.0, 0.5, 1.0)    # wide, flat, normal depth
+        scale(b1, "me.time.frame * 0.01")  # grow over time
+    """
+    if sy is None:
+        sy = sx
+    if sz is None:
+        sz = sx
+
+    if shape is None:
+        print("TD API scale(): received None shape")
+        return
+
+    try:
+        transform = shape.op('transform1')
+        if not transform:
+            print(f"TD API scale(): transform1 not found inside {shape.name}")
+            return
+
+        _set_par(transform.par.sx, sx)
+        _set_par(transform.par.sy, sy)
+        _set_par(transform.par.sz, sz)
+
+        return shape
+
+    except Exception as e:
+        print(f"TD API scale(): error processing shape — {e}")
 
 
 def audio_reactive(*shapes, low=0.8, high=1.0):

@@ -15,12 +15,14 @@ Tilt it on its side. [td: rotate(t1, 90, 0, 0)]
 And spin it continuously. [td: rotate(t1, 90, "me.time.frame", 0)]
 Now a tube, like a cylinder. [td: let tu1 = tube(0.3, 0.3, 0.8, color="yellow")]
 Move it to the left. [td: move(tu1, -1.5, 0.0, 0.0)]
-And a cone, with a pointed top. [td: let tu2 = tube(0.0, 0.4, 1.0, color="red")]
-Let's move it up. [td: move(tu2, 0.0, 1.0, -1.0)]
+And a cone, with a pointed top. [td: let tu2 = tube(0.0, 0.2, 0.5, color="red")]
+Let's move it up. [td: move(tu2, 0.0, 0.6, 0.0)]
 Let's make the tube audio reactive. [td: audio_reactive(tu1)]
 It should now be reacting to the sound of my voice.
 Now let's remove the first cube. [td: remove(b1)]
 We can make all the shapes audio reactive. [td: audio_reactive(b2, s1, s2, t1, tu2)]
 That should look really neat!
 But let's make it more intense. [td: audio_reactive(b2, s1, s2, t1, tu1, tu2, low=0.5)]
+Now I want the cone to scale up and down in a loop. [td: scale(tu2, "abs(math.sin(math.pi * me.time.frame / me.time.end * 10)) * 3")]
+And stretch out the sides of the torus. [td: scale(t1, 2.5, 1.0, 1.0)]
 Great, how fun!
