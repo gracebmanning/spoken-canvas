@@ -286,6 +286,17 @@
             return group;
         }
 
+        function line(fromX, fromY, toX, toY, color = 'white', thickness = 3) {
+            const path = new Path.Line({
+                from: [fromX, fromY],
+                to: [toX, toY],
+                strokeColor: parseColor(color),
+                strokeWidth: thickness
+            });
+            console.log('Created line:', path);
+            return path;
+        }
+
         // Create text at a position
         function text(content, x = center.x, y = center.y, size = 24, color = 'white') {
             const textItem = new paper.PointText({
@@ -435,6 +446,7 @@
         window.rect = rect;
         window.ellipse = ellipse;
         window.arrow = arrow;
+        window.line = line;
         window.text = text;
         window.box = box;
         window.scale = scale;
