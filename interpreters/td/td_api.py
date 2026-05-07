@@ -19,6 +19,7 @@ Stacking behavior:
 """
 import td   # type: ignore
 import re
+import math
 
 COLOR_MAP = {
     # Reds / Oranges
@@ -106,6 +107,7 @@ def _get_namespace():
         'sphere': sphere,
         'torus':  torus,
         'tube':   tube,
+        'cloud': cloud,
         'move': move,
         'rotate': rotate,
         'scale': scale,
@@ -126,7 +128,7 @@ def _save_namespace(namespace):
     on each call to _get_namespace().
     """
     parent = me.parent()    # type: ignore
-    api_keys = {'cube', 'sphere', 'torus', 'tube', 'move', 'rotate',
+    api_keys = {'cube', 'sphere', 'torus', 'tube', 'cloud', 'move', 'rotate',
                 'scale', 'audio_reactive', 'color', 'opacity', 'remove', 'clear'}
     saveable = {k: v for k, v in namespace.items()
                 if k not in api_keys and not k.startswith('__')}
@@ -270,6 +272,110 @@ def _create_sop(op_type, parent_comp):
     return out
 
 
+def _create_point_cloud_sop(parent_comp, n, spread):
+    """
+    Build: gridPOP → poptosopSOP → noiseSOP → transformSOP → geometryCOMP → renderTOP → levelTOP → outTOP
+
+    Uses a Grid POP with Point Primitives connectivity to produce clean point
+    geometry, which the noiseSOP then displaces into 3D space. The Grid SOP
+    cannot produce points directly (only Polygon, Mesh, NURBS, Bezier), so
+    the POP route is used instead.
+
+    Args:
+        parent_comp: The Base COMP to build inside
+        n:           Grid dimension — n x n points total (e.g. n=10 → 100 points)
+        spread:      Noise amplitude controlling how far points are scattered.
+
+    Returns:
+        The Out TOP
+
+    Notes:
+        - Morphing: after creation, animate the noiseSOP offset parameters:
+              parent_comp.op('noise1').par.offsetx.expr = "me.time.seconds * 0.3"
+              parent_comp.op('noise1').par.offsety.expr = "me.time.seconds * 0.2"
+    """
+    # Grid POP — n×n particles with Point Primitives connectivity
+    grid_pop = parent_comp.create(td.gridPOP)
+    grid_pop.viewer = True
+    grid_pop.nodeX = -800
+    grid_pop.nodeY = 0
+    grid_pop.par.rows = n
+    grid_pop.par.cols = n
+    grid_pop.par.surftype = 1  # Point Primitives
+
+    # POP to SOP — converts POP particle data to SOP point geometry
+    pop_to_sop = parent_comp.create(td.poptoSOP)
+    pop_to_sop.viewer = True
+    pop_to_sop.nodeX = -600
+    pop_to_sop.nodeY = 0
+    pop_to_sop.par.pop = grid_pop.name
+
+    # Noise SOP — displaces points into a 3D cloud shape
+    noise = parent_comp.create(td.noiseSOP)
+    noise.viewer = True
+    noise.nodeX = -400
+    noise.nodeY = 0
+    noise.par.amp = spread
+    noise.inputConnectors[0].connect(pop_to_sop.outputConnectors[0])
+
+    # Transform SOP — same name (transform1) as _create_sop so all transform
+    # functions (move, rotate, scale, audio_reactive) work on clouds unchanged
+    transform = parent_comp.create(td.transformSOP)
+    transform.viewer = True
+    transform.nodeX = -200
+    transform.nodeY = 0
+    transform.inputConnectors[0].connect(noise.outputConnectors[0])
+
+    # Geometry COMP
+    geo = parent_comp.create(td.geometryCOMP)
+    geo.viewer = True
+    geo.nodeX = 0
+    geo.nodeY = 0
+    geo.render = True
+    geo.display = True
+    for child in geo.findChildren(depth=1):
+        child.destroy()
+    inSOP = geo.create(td.inSOP)
+    outSOP = geo.create(td.outSOP)
+    outSOP.nodeX = 200
+    outSOP.setInputs([inSOP])
+    outSOP.render = True
+    outSOP.display = True
+    geo.inputConnectors[0].connect(transform.outputConnectors[0])
+
+    # Phong material for color
+    mat = parent_comp.create(td.phongMAT)
+    mat.viewer = True
+    mat.nodeX = 0
+    mat.nodeY = -200
+    geo.par.material = mat.name
+
+    # Render TOP
+    render = parent_comp.create(td.renderTOP)
+    render.viewer = True
+    render.nodeX = 200
+    render.nodeY = 0
+    render.par.camera = '../camera'
+    render.par.geometry = '*'
+    render.par.lights = '../light'
+
+    # Level TOP for per-shape opacity control
+    level = parent_comp.create(td.levelTOP)
+    level.viewer = True
+    level.nodeX = 400
+    level.nodeY = 0
+    level.setInputs([render])
+
+    # Out TOP
+    out = parent_comp.create(td.outTOP)
+    out.viewer = True
+    out.nodeX = 600
+    out.nodeY = 0
+    out.setInputs([level])
+
+    return out
+
+
 def _set_par(par, value):
     """
     Set a parameter to either a constant value or a TD expression string.
@@ -311,7 +417,7 @@ def cube(sizex=1.0, sizey=None, sizez=None, color='white'):
 
     parent = me.parent()    # type: ignore
     shapes_container = parent.op('shapes')
-    name = _auto_name('box')
+    name = _auto_name('cube')
     color_rgb = parse_color(color)
 
     shapes = parent.fetch('td_shapes', [])
@@ -494,6 +600,76 @@ def tube(rad1=0.5, rad2=None, height=0.5, color='white'):
     _rebuild_composite()
 
     return tube_base
+
+
+def cloud(density=1.0, spread=1.0, color='white'):
+    """
+    Create a point cloud inside a Base COMP and connect it to shapes_composite.
+    Points are distributed on a grid and scattered into 3D space via a noiseSOP.
+
+    Args:
+        density: Controls point count from 0.0 to 1.0.
+                 Maps to a grid of n x n points where n = sqrt(MAX_POINTS * density).
+                 MAX_POINTS = 100, so density 1.0 = 100 points, 0.5 ≈ 50 points.
+        color:   Color name or hex string applied to the Phong material.
+        spread:  Noise amplitude controlling how far points are scattered in 3D.
+                 1.0 is a loose visible cloud. Try 0.5 for tighter, 2.0 for wider.
+
+    Returns:
+        The Base COMP, compatible with move(), rotate(), scale(), audio_reactive(),
+        color(), opacity(), and remove().
+
+    Examples:
+        cl1 = cloud()                              # default, 100 white points
+        cl1 = cloud(0.5, 1.0, 'cyan')             # 50 cyan points, default spread
+        cl1 = cloud(1.0, 2.0, 'violet')           # 100 violet points, widely spread
+        rotate(cl1, 0, "me.time.frame * 0.5", 0)  # spin continuously
+        audio_reactive(cl1, low=0.8, high=1.3)    # pulse with voice
+
+    Morphing (animating the cloud shape over time):
+        After creation, set expressions on the noiseSOP offset parameters:
+            cl1.op('noise1').par.offsetx.expr = "me.time.seconds * 0.3"
+            cl1.op('noise1').par.offsety.expr = "me.time.seconds * 0.2"
+    """
+    MAX_POINTS = 100
+    density = max(0.0, min(1.0, density))
+    n = max(2, int(math.sqrt(MAX_POINTS * density)))
+
+    parent = me.parent()  # type: ignore
+    shapes_container = parent.op('shapes')
+    name = _auto_name('cloud')
+    color_rgb = parse_color(color)
+
+    shapes = parent.fetch('td_shapes', [])
+    node_y = (len(shapes) + 1) * -200
+
+    # Destroy any existing operator with the same name (re-run safety)
+    existing = shapes_container.op(name)
+    if existing:
+        existing.destroy()
+
+    # Create Base COMP container for this shape
+    cloud_base = shapes_container.create(td.baseCOMP, name)
+    cloud_base.nodeX = 0
+    cloud_base.nodeY = node_y
+    cloud_base.viewer = True
+
+    # Build the point cloud SOP chain inside the Base COMP
+    _create_point_cloud_sop(cloud_base, n, spread)
+
+    # Apply color to the Phong material
+    mat = cloud_base.op('phong1')
+    if mat:
+        mat.par.diffr = color_rgb[0]
+        mat.par.diffg = color_rgb[1]
+        mat.par.diffb = color_rgb[2]
+
+    # Track shape — newest first so it renders on top in the composite
+    shapes.insert(0, name)
+    parent.store('td_shapes', shapes)
+    _rebuild_composite()
+
+    return cloud_base
 
 
 def move(shape, x=0.0, y=0.0, z=0.0):
