@@ -22,30 +22,30 @@ import re
 
 COLOR_MAP = {
     # Reds / Oranges
-    'red':     [1.0,   0.0,   0.0],
-    'orange':  [1.0,   0.647, 0.0],
-    'amber':   [1.0,   0.749, 0.0],
-    'yellow':  [1.0,   1.0,   0.0],
+    'red': '#FB2C36',
+    'orange': '#FF6900',
+    'amber': '#FD9A00',
+    'yellow': '#EFB100',
     # Greens
-    'lime':    [0.749, 1.0,   0.0],
-    'green':   [0.0,   1.0,   0.0],
-    'emerald': [0.314, 0.784, 0.471],
-    'teal':    [0.0,   0.502, 0.502],
+    'lime': '#7CCF00',
+    'green': '#00C950',
+    'emerald': '#00BC7D',
+    'teal': '#00BBA7',
     # Blues
-    'cyan':    [0.0,   1.0,   1.0],
-    'blue':    [0.0,   0.0,   1.0],
-    'indigo':  [0.294, 0.0,   0.510],
-    'violet':  [0.933, 0.510, 0.933],
+    'cyan': '#00B8DB',
+    'blue': '#2B7FFF',
+    'indigo': '#615FFF',
+    'violet': '#8E51FF',
     # Pinks / Purples
-    'purple':  [0.502, 0.0,   0.502],
-    'magenta': [1.0,   0.0,   1.0],
-    'pink':    [1.0,   0.753, 0.796],
-    'mauve':   [0.878, 0.690, 0.812],
+    'purple': '#AD46FF',
+    'magenta': '#E12AFB',
+    'pink': '#FDA5D5',
+    'mauve': '#E0B0CF',
     # Neutrals
-    'white':   [1.0,   1.0,   1.0],
-    'gray':    [0.502, 0.502, 0.502],
-    'black':   [0.0,   0.0,   0.0],
-    'brown':   [0.545, 0.271, 0.075],
+    'white': '#FFFFFF',
+    'gray': '#6A7282',
+    'black': '#000000',
+    'brown': '#733E0A',
 }
 
 
@@ -64,11 +64,11 @@ def parse_color(color_val):
     """
     normalized = str(color_val).strip().strip('"\'').lower()
 
-    if normalized in COLOR_MAP:
-        return COLOR_MAP[normalized]
+    # if normalized in COLOR_MAP:
+    #     return COLOR_MAP[normalized]
 
     # Try CSS hex string e.g. "#FF0000" or "FF0000"
-    hex_str = normalized.lstrip('#')
+    hex_str = (COLOR_MAP.get(normalized) or normalized).lstrip('#')
     if len(hex_str) == 6:
         try:
             r = int(hex_str[0:2], 16) / 255.0

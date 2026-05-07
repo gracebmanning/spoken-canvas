@@ -182,18 +182,31 @@
 
         function parseColor(colorStr) {
             const colors = {
-                'red': '#FF0000',
-                'green': '#00FF00',
-                'blue': '#0000FF',
-                'yellow': '#FFFF00',
-                'cyan': '#00FFFF',
-                'magenta': '#FF00FF',
+                // Reds / Oranges
+                'red': '#FB2C36',
+                'orange': '#FF6900',
+                'amber': '#FD9A00',
+                'yellow': '#EFB100',
+                // Greens
+                'lime': '#7CCF00',
+                'green': '#00C950',
+                'emerald': '#00BC7D',
+                'teal': '#00BBA7',
+                // Blues
+                'cyan': '#00B8DB',
+                'blue': '#2B7FFF',
+                'indigo': '#615FFF',
+                'violet': '#8E51FF',
+                // Pinks / Purples
+                'purple': '#AD46FF',
+                'magenta': '#E12AFB',
+                'pink': '#FDA5D5',
+                'mauve': '#E0B0CF',
+                // Neutrals
                 'white': '#FFFFFF',
+                'gray': '#6A7282',
                 'black': '#000000',
-                'orange': '#FFA500',
-                'purple': '#800080',
-                'pink': '#FFC0CB',
-                'brown': '#8B4513'
+                'brown': '#733E0A',
             };
 
             const lower = String(colorStr).toLowerCase().replace(/['"]/g, '');
