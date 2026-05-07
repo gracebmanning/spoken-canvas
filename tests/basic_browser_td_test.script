@@ -25,4 +25,7 @@ That should look really neat!
 But let's make it more intense. [td: audio_reactive(b2, s1, s2, t1, tu1, tu2, low=0.5)]
 Now I want the cone to scale up and down in a loop. [td: scale(tu2, "abs(math.sin(math.pi * me.time.frame / me.time.end * 10)) * 3")]
 And stretch out the sides of the torus. [td: scale(t1, 2.5, 1.0, 1.0)]
+Let's change the torus color. [td: color(t1, "teal")]
+No, not that one. [td: color(t1, "amber")]
+Actually, let's just fade it out a bit. [td: opacity(t1, 0.6)]
 Great, how fun!

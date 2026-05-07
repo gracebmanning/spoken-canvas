@@ -21,17 +21,30 @@ import td   # type: ignore
 import re
 
 COLOR_MAP = {
+    # Reds / Oranges
     'red':     [1.0,   0.0,   0.0],
-    'green':   [0.0,   1.0,   0.0],
-    'blue':    [0.0,   0.0,   1.0],
-    'yellow':  [1.0,   1.0,   0.0],
-    'cyan':    [0.0,   1.0,   1.0],
-    'magenta': [1.0,   0.0,   1.0],
-    'white':   [1.0,   1.0,   1.0],
-    'black':   [0.0,   0.0,   0.0],
     'orange':  [1.0,   0.647, 0.0],
+    'amber':   [1.0,   0.749, 0.0],
+    'yellow':  [1.0,   1.0,   0.0],
+    # Greens
+    'lime':    [0.749, 1.0,   0.0],
+    'green':   [0.0,   1.0,   0.0],
+    'emerald': [0.314, 0.784, 0.471],
+    'teal':    [0.0,   0.502, 0.502],
+    # Blues
+    'cyan':    [0.0,   1.0,   1.0],
+    'blue':    [0.0,   0.0,   1.0],
+    'indigo':  [0.294, 0.0,   0.510],
+    'violet':  [0.933, 0.510, 0.933],
+    # Pinks / Purples
     'purple':  [0.502, 0.0,   0.502],
+    'magenta': [1.0,   0.0,   1.0],
     'pink':    [1.0,   0.753, 0.796],
+    'mauve':   [0.878, 0.690, 0.812],
+    # Neutrals
+    'white':   [1.0,   1.0,   1.0],
+    'gray':    [0.502, 0.502, 0.502],
+    'black':   [0.0,   0.0,   0.0],
     'brown':   [0.545, 0.271, 0.075],
 }
 
@@ -97,6 +110,8 @@ def _get_namespace():
         'rotate': rotate,
         'scale': scale,
         'audio_reactive': audio_reactive,
+        'color': color,
+        'opacity': opacity,
         'remove': remove,
         'clear': clear,
     })
@@ -111,7 +126,8 @@ def _save_namespace(namespace):
     on each call to _get_namespace().
     """
     parent = me.parent()    # type: ignore
-    api_keys = {'box', 'sphere', 'torus', 'tube', 'move', 'rotate', 'scale', 'audio_reactive', 'remove', 'clear'}
+    api_keys = {'box', 'sphere', 'torus', 'tube', 'move', 'rotate',
+                'scale', 'audio_reactive', 'color', 'opacity', 'remove', 'clear'}
     saveable = {k: v for k, v in namespace.items()
                 if k not in api_keys and not k.startswith('__')}
     parent.store('td_namespace', saveable)
@@ -239,11 +255,17 @@ def _create_sop(op_type, parent_comp):
     render.par.geometry = '*'
     render.par.lights = '../light'
 
+    level = parent_comp.create(td.levelTOP)
+    level.viewer = True
+    level.nodeX = 400
+    level.nodeY = 0
+    level.setInputs([render])
+
     out = parent_comp.create(td.outTOP)
     out.viewer = True
-    out.nodeX = 400
+    out.nodeX = 600
     out.nodeY = 0
-    out.setInputs([render])
+    out.setInputs([level])
 
     return out
 
@@ -636,6 +658,80 @@ def audio_reactive(*shapes, low=0.8, high=1.0):
 
         except Exception as e:
             print(f"TD API audio_reactive(): error processing shape, skipping — {e}")
+
+
+def color(shape, color):
+    """
+    Change the diffuse color of a shape's Phong material at runtime.
+
+    Args:
+        shape: The Base COMP returned by a shape creation function
+        color: Color name (e.g. 'red') or CSS hex string (e.g. '#FF0000')
+
+    Returns:
+        The same Base COMP, so calls can be chained if needed.
+
+    Examples:
+        color(b1, 'red')
+        color(b1, '#00FF00')
+        color(b1, 'emerald')
+    """
+    if shape is None:
+        print("TD API color(): received None shape")
+        return
+
+    try:
+        mat = shape.op('phong1')
+        if not mat:
+            print(f"TD API color(): phong1 not found inside {shape.name}")
+            return
+
+        rgb = parse_color(color)
+        mat.par.diffr = rgb[0]
+        mat.par.diffg = rgb[1]
+        mat.par.diffb = rgb[2]
+
+        return shape
+
+    except Exception as e:
+        print(f"TD API color(): error processing shape — {e}")
+
+
+def opacity(shape, value=1.0):
+    """
+    Set the opacity of a shape via its Level TOP.
+    Accepts a number (0.0–1.0) or a TD expression string.
+
+    Args:
+        shape: The Base COMP returned by a shape creation function
+        value: Opacity from 0.0 (invisible) to 1.0 (fully opaque).
+               Can be a TD expression string for animated opacity.
+
+    Returns:
+        The same Base COMP, so calls can be chained if needed.
+
+    Examples:
+        opacity(b1, 0.5)                                          # 50% transparent
+        opacity(b1, 0.0)                                          # invisible
+        opacity(b1, "abs(math.sin(me.time.frame * 0.05))")        # fade in and out
+        opacity(b1, "tdu.remap(op('../sound_data_in')['chan1'], 0, 1, 0.2, 1.0)")  # audio-driven
+    """
+    if shape is None:
+        print("TD API opacity(): received None shape")
+        return
+
+    try:
+        level = shape.op('level1')
+        if not level:
+            print(f"TD API opacity(): level1 not found inside {shape.name}")
+            return
+
+        _set_par(level.par.opacity, value)
+
+        return shape
+
+    except Exception as e:
+        print(f"TD API opacity(): error processing shape — {e}")
 
 
 def remove(shape):
