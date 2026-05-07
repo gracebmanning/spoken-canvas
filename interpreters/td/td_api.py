@@ -102,7 +102,7 @@ def _get_namespace():
 
     # Always repopulate API functions in case the DAT was reloaded
     namespace.update({
-        'box':   box,
+        'cube':   cube,
         'sphere': sphere,
         'torus':  torus,
         'tube':   tube,
@@ -126,7 +126,7 @@ def _save_namespace(namespace):
     on each call to _get_namespace().
     """
     parent = me.parent()    # type: ignore
-    api_keys = {'box', 'sphere', 'torus', 'tube', 'move', 'rotate',
+    api_keys = {'cube', 'sphere', 'torus', 'tube', 'move', 'rotate',
                 'scale', 'audio_reactive', 'color', 'opacity', 'remove', 'clear'}
     saveable = {k: v for k, v in namespace.items()
                 if k not in api_keys and not k.startswith('__')}
@@ -291,7 +291,7 @@ def _set_par(par, value):
 # ============================================================
 
 
-def box(sizex=1.0, sizey=None, sizez=None, color='white'):
+def cube(sizex=1.0, sizey=None, sizez=None, color='white'):
     """
     Create a Box SOP inside a Base COMP and connect it to shapes_composite.
 
