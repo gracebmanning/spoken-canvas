@@ -87,9 +87,11 @@ A red circle should appear when you reach the end!
 
 ## Available Drawing Commands
 
+### Browser Commands
+
 The browser interpreter supports these functions:
 
-### Basic Shapes
+#### Basic Shapes
 
 - `circle(radius, color, x, y)` - Create a circle
 - `square(size, color, x, y)` - Create a square
@@ -97,39 +99,94 @@ The browser interpreter supports these functions:
 - `ellipse(width, height, color, x, y)` - Create an ellipse
 - `box(width, height, color, x, y, borderWidth)` - Create a bordered box (no fill)
 
-### Annotations
+#### Annotations
 
 - `text(content, x, y, size, color)` - Create text
 - `arrow(fromX, fromY, toX, toY, color, thickness)` - Create an arrow
 
-### Animations
+#### Animations
 
 - `move(object, x, y, duration)` - Move object to position
 - `scale(object, factor, duration)` - Scale object
 - `rotate(object, degrees, duration)` - Rotate object
 - `fade(object, opacity, duration)` - Fade object
 
-### Utilities
+#### Utilities
 
 - `clear()` - Clear all graphics
 - `remove(object)` - Remove specific object
 
+### TouchDesigner Commands
+
+The TouchDesigner interpreter supports these functions:
+
+#### Basic Shapes
+
+- `cube(sizex, sizey, sizez, color)` - Create a cube.
+- `sphere(radx, rady, radz, color)` - Create a sphere.
+- `torus(radx, rady, color)` - Create a torus.
+- `tube(rad1, rad2, height, color)` - Create a tube.
+
+#### Transformations
+
+- `move(shape, x, y, z)` - Move object to position.
+- `rotate(shape, rx, ry, rz)` - Rotate object.
+- `scale(shape, sx, sy, sz)` - Scale object.
+- `audio_reactive(*shapes, low, high)` - Make object(s) audio reactive to voice volume.
+- `color(shape, color)` - Set shape color.
+- `opacity(shape, value)` - Set shape opacity.
+
+#### Utilities
+
+- `remove(shape)` - Remove specific shape.
+- `clear()` - Remove all shapes.
+
 ### Colors
 
-Supports named colors: `red`, `blue`, `green`, `yellow`, `cyan`, `magenta`, `white`, `black`, `orange`, `purple`, `pink`, `brown`
+Both platforms support hex codes (`#FF0000`, `#00FF00`, etc.) or the following named colors:
 
-Or hex codes: `#FF0000`, `#00FF00`, etc.
+```
+const colors = {
+    // Reds / Oranges
+    'red': '#FB2C36',
+    'orange': '#FF6900',
+    'amber': '#FD9A00',
+    'yellow': '#EFB100',
+    // Greens
+    'lime': '#7CCF00',
+    'green': '#00C950',
+    'emerald': '#00BC7D',
+    'teal': '#00BBA7',
+    // Blues
+    'cyan': '#00B8DB',
+    'blue': '#2B7FFF',
+    'indigo': '#615FFF',
+    'violet': '#8E51FF',
+    // Pinks / Purples
+    'purple': '#AD46FF',
+    'magenta': '#E12AFB',
+    'pink': '#FDA5D5',
+    'mauve': '#E0B0CF',
+    // Neutrals
+    'white': '#FFFFFF',
+    'gray': '#6A7282',
+    'black': '#000000',
+    'brown': '#733E0A',
+};
+```
 
 ## Script File Format
 
-Scripts mix narration with embedded commands:
+Scripts mix narration with embedded commands, beginning each with a directive to browser or TouchDesigner:
 
 ```
-This is narration that you speak. [circle(50, "red")]
+This is narration that you speak. [browser: circle(50, "red")]
 
-More narration. [move(c1, 400, 300, 2)]
+More narration. [browser: move(c1, 400, 300, 2)]
 
-You can reference variables. [let c2 = circle(30, "blue")]
+You can reference variables. [browser: let c2 = circle(30, "blue")]
+
+And create shapes using both interpreters. [td: let b1 = box(0.5, color="blue")]
 
 Reset clears everything. [RESET()]
 ```
@@ -171,10 +228,15 @@ td-websocket-animation/
 ├── interpreters/
 │   ├── browser/
 │   │   └── paper_and_anime_playground.html
-│   └── td/                    # TouchDesigner interpreter
+│   └── td/
+│       ├── touchdesigner_files/ # TouchDesigner files
+│       ├── td_api.py
+│   │   └── td_setup.py
 └── tests/
-    ├── basic_browser_test.script
-    └── system_architecture.script
+│   ├── system_diagrams/
+│   │   └── system_architecture.script
+│   ├── basic_browser_td_test.script
+│   └── basic_browser_test.script
 ```
 
 ## Examples
