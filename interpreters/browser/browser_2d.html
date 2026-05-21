@@ -3,13 +3,15 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Browser Interpreter</title>
+    <title>Browser 2D Interpreter</title>
     <!-- Paper.js for vector graphics -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.17/paper-full.min.js"></script>
     <!-- Anime.js for animations -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
     <!-- Shared color palette (defines COLOR_MAP and parseColor globally) -->
     <script src="colors.js"></script>
+    <!-- Shared interpreter plumbing (executeCommand + connectInterpreter) -->
+    <script src="interpreter_core.js"></script>
     <style>
         body {
             margin: 0;
@@ -162,7 +164,7 @@
             }
         }
 
-        debug('Browser Interpreter starting...');
+        debug('Browser 2D Interpreter starting...');
 
         // ============================================
         // PAPER.JS SETUP
@@ -450,91 +452,29 @@
         // WEBSOCKET CONNECTION
         // ============================================
 
-        let ws;
-        let reconnectAttempts = 0;
-        const maxReconnectAttempts = 5;
+        connectInterpreter({
+            target: 'browser_2d',
+            onStatus: (msg) => debug(msg),
+            onExecute: (code) => {
+                debug('Executing: ' + code);
+                console.log('>>> EVAL:', code);
+                executeCommand(code, {
+                    afterExecute: () => view.draw(),   // force Paper.js to render the change
+                    onError: (e) => debug('Error: ' + e.message),
+                });
+            },
+            onPosition: (data) => {
+                scriptState.position = data.position;
+                if (data.totalWords) scriptState.totalWords = data.totalWords;
+                if (data.words) scriptState.words = data.words;
+                if (data.plainText) scriptState.plainText = data.plainText;
 
-        function connectWebSocket() {
-            try {
-                const wsUrl = 'ws://127.0.0.1:8000/ws';
-                debug('Connecting to: ' + wsUrl);
-
-                ws = new WebSocket(wsUrl);
-
-                ws.onopen = () => {
-                    wsConnected = true;
-                    reconnectAttempts = 0;
-                    debug('Connected! Waiting for commands...');
-                    console.log('WebSocket connected');
-                };
-
-                ws.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-
-                        if (data.target && data.target !== 'browser_2d') return;
-
-                        if (data.command === 'execute') {
-                            let code = data.code;
-                            debug('Executing: ' + code);
-                            console.log('>>> EVAL:', code);
-
-                            try {
-                                // Replace 'let varname =' with 'window.varname =' to make variables global
-                                code = code.replace(/\blet\s+(\w+)\s*=/g, 'window.$1 =');
-                                code = code.replace(/\bconst\s+(\w+)\s*=/g, 'window.$1 =');
-
-                                // Execute in global scope
-                                (0, eval)(code);
-
-                                // Force Paper.js to render changes
-                                view.draw();
-                            } catch (e) {
-                                console.error('Execution error:', e);
-                                debug('Error: ' + e.message);
-                            }
-                        } else if (data.command === 'update_position') {
-                            // Update script state
-                            scriptState.position = data.position;
-                            if (data.totalWords) scriptState.totalWords = data.totalWords;
-                            if (data.words) scriptState.words = data.words;
-                            if (data.plainText) scriptState.plainText = data.plainText;
-
-                            // Update displays
-                            const progress = scriptState.totalWords > 0 ?
-                                (scriptState.position / scriptState.totalWords * 100).toFixed(0) : 0;
-                            debug(`Position: ${scriptState.position}/${scriptState.totalWords} (${progress}%)`);
-                            updateScriptDisplay();
-                        }
-                    } catch (e) {
-                        debug('Parse error: ' + e.message);
-                        console.error('Parse error:', e);
-                    }
-                };
-
-                ws.onerror = (error) => {
-                    debug('WebSocket error');
-                    console.error('WebSocket error:', error);
-                };
-
-                ws.onclose = () => {
-                    wsConnected = false;
-                    debug('Disconnected');
-                    console.log('WebSocket closed');
-
-                    if (reconnectAttempts < maxReconnectAttempts) {
-                        reconnectAttempts++;
-                        debug('Reconnecting... attempt ' + reconnectAttempts);
-                        setTimeout(connectWebSocket, 2000);
-                    }
-                };
-            } catch (e) {
-                debug('Error creating WebSocket: ' + e.message);
-            }
-        }
-
-        // Start connection
-        connectWebSocket();
+                const progress = scriptState.totalWords > 0 ?
+                    (scriptState.position / scriptState.totalWords * 100).toFixed(0) : 0;
+                debug(`Position: ${scriptState.position}/${scriptState.totalWords} (${progress}%)`);
+                updateScriptDisplay();
+            },
+        });
 
         console.log('Paper.js initialized, view size:', view.size);
         debug('Ready');
