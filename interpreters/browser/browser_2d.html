@@ -8,6 +8,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.17/paper-full.min.js"></script>
     <!-- Anime.js for animations -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <!-- Shared color palette (defines COLOR_MAP and parseColor globally) -->
+    <script src="colors.js"></script>
     <style>
         body {
             margin: 0;
@@ -179,40 +181,6 @@
         // ============================================
         // INTERPRETER FUNCTIONS (called by eval)
         // ============================================
-
-        function parseColor(colorStr) {
-            const colors = {
-                // Reds / Oranges
-                'red': '#FB2C36',
-                'orange': '#FF6900',
-                'amber': '#FD9A00',
-                'yellow': '#EFB100',
-                // Greens
-                'lime': '#7CCF00',
-                'green': '#00C950',
-                'emerald': '#00BC7D',
-                'teal': '#00BBA7',
-                // Blues
-                'cyan': '#00B8DB',
-                'blue': '#2B7FFF',
-                'indigo': '#615FFF',
-                'violet': '#8E51FF',
-                // Pinks / Purples
-                'purple': '#AD46FF',
-                'magenta': '#E12AFB',
-                'pink': '#FDA5D5',
-                'mauve': '#E0B0CF',
-                // Neutrals
-                'white': '#FFFFFF',
-                'gray': '#6A7282',
-                'black': '#000000',
-                'brown': '#733E0A',
-            };
-
-            const lower = String(colorStr).toLowerCase().replace(/['"]/g, '');
-            return colors[lower] || colorStr;
-        }
-
         function circle(radius, color, x = center.x, y = center.y) {
             const path = new Path.Circle({
                 center: [x, y],
