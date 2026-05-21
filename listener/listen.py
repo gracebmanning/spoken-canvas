@@ -22,6 +22,27 @@ except ImportError:
 DEBUG = False
 WEBSOCKET_URL = "ws://localhost:8000/ws"
 
+INTERPRETER_TARGETS = ["browser_2d", "browser_3d", "td"]
+DEFAULT_TARGET = "browser_2d"
+
+
+def split_command_target(content):
+    """
+    Split a script command into (target, code) based on its leading prefix.
+
+    A command may begin with a recognized interpreter name followed by a colon,
+    e.g. "browser_2d: circle(50, 'red')" -> ("browser_2d", "circle(50, 'red')").
+    Only the first colon is treated as the separator, so colons inside the code
+    (ternaries, object literals, etc.) are preserved.
+
+    If the leading token is not a recognized target, the command is returned
+    unchanged under DEFAULT_TARGET, preserving the original no-prefix behavior.
+    """
+    prefix, sep, rest = content.partition(':')
+    if sep and prefix.strip() in INTERPRETER_TARGETS:
+        return prefix.strip(), rest.strip()
+    return DEFAULT_TARGET, content
+
 
 def normalize_text_for_matching(text):
     """
@@ -170,7 +191,7 @@ class WebSocketClient:
             except Exception as e:
                 print(f"Error sending message: {e}")
 
-    def send_command(self, command_str, target="browser"):
+    def send_command(self, command_str, target=DEFAULT_TARGET):
         """Send a raw command string to interpreter."""
         if websocket is None or not self.connected:
             return
@@ -180,12 +201,12 @@ class WebSocketClient:
             "code": command_str
         })
 
-    def send_position(self, position, total_words, words, plain_text, target="browser"):
+    def send_position(self, position, total_words, words, plain_text, target=DEFAULT_TARGET):
         """
         Send current position in script to interpreter.
 
         Args:
-            target: Destination interpreter ("browser", "td", etc.)
+            target: Destination interpreter ("browser_2d", "browser_3d", "td", etc.)
         """
         if websocket is None or not self.connected:
             return
@@ -381,29 +402,31 @@ class RealtimeListener:
         """Check if we've reached any commands and execute them."""
         for idx, (command_word_index, command_content) in enumerate(self.commands):
             if idx not in self.executed_commands and position >= command_word_index:
-                # Check for meta-command RESET()
-                if command_content.strip().upper() == "RESET()":
+                content = command_content.strip()
+
+                # Meta-command RESET()
+                if content.upper() == "RESET()":
                     print(f"\n>>> Meta-command RESET() triggered at word {command_word_index}")
                     self.executed_commands.add(idx)
                     self.reset()
+                    continue
 
-                elif command_content.strip().startswith("td:"):
-                    # Strip the "td:" prefix and send the raw command string to TD
-                    raw = command_content.strip()[3:].strip()
-                    print(f"\n>>> TD command at word {command_word_index}: [{raw}]")
-                    self.ws_client.send_command(raw, target="td")
-                    self.executed_commands.add(idx)
+                # Route by prefix, using DEFAULT_TARGET as fallback if none provided/recognized.
+                target, raw = split_command_target(content)
+                print(f"\n>>> {target} command at word {command_word_index}: [{raw}]")
+                self.ws_client.send_command(raw, target=target)
+                self.executed_commands.add(idx)
 
-                elif command_content.strip().startswith('browser:'):
-                    # Strip the "browser:" prefix and send the raw command string to browser
-                    raw = command_content.strip()[8:].strip()
-                    print(f"\n>>> Browser command at word {command_word_index}: [{raw}]")
-                    self.ws_client.send_command(raw, target="browser")
-                    self.executed_commands.add(idx)
-                else:
-                    print(f"\n>>> Executing command at word {command_word_index}: [{command_content}]")
-                    self.ws_client.send_command(command_content, target="browser")
-                    self.executed_commands.add(idx)
+    def broadcast_position(self):
+        """Send the current script position to every interpreter."""
+        for target in INTERPRETER_TARGETS:
+            self.ws_client.send_position(
+                self.current_position,
+                len(self.script_words),
+                self.script_words,
+                self.plain_text,
+                target=target
+            )
 
     def process_audio(self):
         """Process audio from microphone."""
@@ -453,20 +476,7 @@ class RealtimeListener:
                     self.check_and_execute_commands(self.current_position)
 
                 # Always send position update to interpreter (for UI)
-                self.ws_client.send_position(
-                    self.current_position,
-                    len(self.script_words),
-                    self.script_words,
-                    self.plain_text,
-                    target="browser"
-                )
-                self.ws_client.send_position(
-                    self.current_position,
-                    len(self.script_words),
-                    self.script_words,
-                    self.plain_text,
-                    target="td"
-                )
+                self.broadcast_position()
 
     def draw_ui(self):
         """Draw status window."""
@@ -553,20 +563,7 @@ class RealtimeListener:
             print("  ✓ Reached end of script!")
 
         # Update UI
-        self.ws_client.send_position(
-            self.current_position,
-            len(self.script_words),
-            self.script_words,
-            self.plain_text,
-            target="browser"
-        )
-        self.ws_client.send_position(
-            self.current_position,
-            len(self.script_words),
-            self.script_words,
-            self.plain_text,
-            target="td"
-        )
+        self.broadcast_position()
 
     def reset(self):
         """Reset recognition state."""
@@ -578,25 +575,10 @@ class RealtimeListener:
         self.executed_commands = set()
         self.recognizer.reset()
 
-        # Reset browser - clear graphics and reset position
-        self.ws_client.send_command("clear()", target="browser")
-        self.ws_client.send_position(
-            self.current_position,
-            len(self.script_words),
-            self.script_words,
-            self.plain_text,
-            target="browser"
-        )
-
-        # Reset TouchDesigner - clear graphics and reset position
-        self.ws_client.send_command("clear()", target="td")
-        self.ws_client.send_position(
-            self.current_position,
-            len(self.script_words),
-            self.script_words,
-            self.plain_text,
-            target="td"
-        )
+        # Reset position on every interpreter
+        for target in INTERPRETER_TARGETS:
+            self.ws_client.send_command("clear()", target=target)
+        self.broadcast_position()
 
     def run(self):
         """Main loop."""
@@ -616,13 +598,8 @@ class RealtimeListener:
         print("="*60)
         print("\nListening...")
 
-        # Send initial position to interpreter
-        self.ws_client.send_position(
-            self.current_position,
-            len(self.script_words),
-            self.script_words,
-            self.plain_text
-        )
+        # Send initial position to every interpreter
+        self.broadcast_position()
 
         running = True
         clock = pygame.time.Clock()

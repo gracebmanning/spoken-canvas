@@ -504,7 +504,7 @@
                     try {
                         const data = JSON.parse(event.data);
 
-                        if (data.target && data.target !== 'browser') return;
+                        if (data.target && data.target !== 'browser_2d') return;
 
                         if (data.command === 'execute') {
                             let code = data.code;
