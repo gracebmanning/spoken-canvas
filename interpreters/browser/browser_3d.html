@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Browser 3D Interpreter</title>
+    <!-- Three.js for 3D graphics -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+    <!-- Shared color palette (defines COLOR_MAP and parseColor globally) -->
+    <script src="colors.js"></script>
+    <!-- Shared interpreter plumbing (executeCommand + connectInterpreter) -->
+    <script src="interpreter_core.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        canvas {
+            display: block;
+            background: transparent;
+        }
+
+        #debug {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: red;
+            font-family: monospace;
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            display: block;
+            z-index: 1000;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="debug">Connecting...</div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        const debugEl = document.getElementById('debug');
+        let wsConnected = false;
+
+        // Script state tracking
+        let scriptState = {
+            position: 0,
+            totalWords: 0,
+            plainText: "",
+            words: [],
+            shown: false
+        };
+
+        function debug(msg) {
+            console.log(msg);
+            debugEl.textContent = msg;
+        }
+
+        debug('Browser 3D Interpreter starting...');
+
+        // ============================================
+        // THREE.JS SETUP
+        // ============================================
+        const canvas = document.getElementById('canvas');
+
+        // initialize scene
+        const scene = new THREE.scene();
+
+        // initialize camera (Field of View, Aspect Ratio, Near clipping, Far clipping)
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 5;
+
+        // initialize renderer
+        const renderer = new THREE.WebGLRenderer({
+            canvas: canvas,
+            alpha: true,
+            antialias: true
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+
+        // global lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight)
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8); // Mimics sunlight
+        directionalLight.position.set(10, 20, 10);
+        scene.add(directionalLight);
+
+        window.addEventListener('resize', () => {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            renderer.setSize(width, height);
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+        });
+
+        // animation / render loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // In the future, any continuous rotation or movement updates go here
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // ============================================
+        // INTERPRETER FUNCTIONS (called by eval)
+        // ============================================
+
+        // ============================================
+        // MAKE FUNCTIONS GLOBALLY ACCESSIBLE
+        // ============================================
+
+        // ============================================
+        // WEBSOCKET CONNECTION
+        // ============================================
+
+        connectInterpreter({
+            target: 'browser_3d',
+            onStatus: (msg) => debug(msg),
+            onExecute: (code) => {
+                debug('Executing: ' + code);
+                console.log('>>> EVAL:', code);
+                executeCommand(code, {
+                    onError: (e) => debug('Error: ' + e.message),
+                });
+            },
+            onPosition: (data) => {
+                scriptState.position = data.position;
+                if (data.totalWords) scriptState.totalWords = data.totalWords;
+                if (data.words) scriptState.words = data.words;
+                if (data.plainText) scriptState.plainText = data.plainText;
+
+                const progress = scriptState.totalWords > 0 ?
+                    (scriptState.position / scriptState.totalWords * 100).toFixed(0) : 0;
+                debug(`Position: ${scriptState.position}/${scriptState.totalWords} (${progress}%)`);
+                updateScriptDisplay();
+            },
+        });
+
+        console.log(`Three.js initialized, view size: ${window.innerWidth}x${window.innerHeight}`);
+        debug('Ready');
+    </script>
+</body>
+
+</html>
