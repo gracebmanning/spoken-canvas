@@ -109,15 +109,125 @@
             camera.updateProjectionMatrix();
         });
 
+        // ============================================
+        // ANIMATION ENGINE
+        // ============================================
+        // Accepts:
+        // 1. Numeric value (tween from current value to target over 'duration' seconds)
+        // 2. String expression (compiled to a function of t, seconds since page load; runs continuously)
+
+        let t = 0; // seconds since page load
+
+        // mesh => Map of "prop.subprop" path => function(t) => value
+        const dynamicProps = new Map();
+
+        function registerDynamic(mesh, path, fn) {
+            if (!dynamicProps.has(mesh)) dynamicProps.set(mesh, new Map());
+            dynamicProps.get(mesh).set(path, fn)
+        }
+
+        function unregisterDynamic(mesh, path) {
+            const props = dynamicProps.get(mesh)
+            if (!props) return;
+            props.delete(path)
+            if (props.size === 0) dynamicProps.delete(mesh);
+        }
+
+        // read/write a nested property like "position.x" on an object
+        function setPath(obj, path, value) {
+            const parts = path.split('.');
+            let target = obj;
+            for (let i = 0; i < parts.length - 1; i++) target = target[parts[i]];
+            target[parts[parts.length - 1]] = value;
+        }
+        function getPath(obj, path) {
+            return path.split('.').reduce((o, k) => o[k], obj);
+        }
+
+        // compile a new expression to a function of t.
+        function compileExpression(expr) {
+            return new Function('t', `return ${expr};`);
+        }
+
+        function easeOutCubic(x) {
+            return 1 - Math.pow(1 - x, 3);
+        }
+
+        // register a duration-based tween
+        // animate 'path' from its current value to 'targetValue' over 'duration' seconds, then self-unregister.
+        function registerTween(mesh, path, targetValue, duration) {
+            const fromValue = getPath(mesh, path);
+            const startT = t;
+            const endT = startT + duration;
+            registerDynamic(mesh, path, (now) => {
+                if (now >= endT) {
+                    unregisterDynamic(mesh, path);
+                    return targetValue;
+                }
+                const progress = (now - startT) / duration;
+                return fromValue + (targetValue - fromValue) * easeOutCubic(progress);
+            });
+        }
+
+        /**
+         * Dispatch x/y/z to the right slot in dynamicProps.
+         *
+         * @param {object}   shape          the Three.js mesh
+         * @param {string}   propName       "position" or "rotation"
+         * @param {*}        x,y,z          numeric, string expression, or undefined
+         * @param {number}   duration       seconds; applies to numeric args only
+         * @param {function} valueTransform converts user value to property unit
+         *                                  (identity for position, deg->rad for rotation)
+        */
+        function applyTransform(shape, propName, x, y, z, duration, valueTransform = (v) => v) {
+            for (const [axis, arg] of [['x', x], ['y', y], ['z', z]]) {
+                const path = `${propName}.${axis}`;
+
+                if (typeof arg === 'string') {
+                    // Continuous expression. Overwrites any existing dynamic on this path.
+                    const fn = compileExpression(arg);
+                    registerDynamic(shape, path, (now) => valueTransform(fn(now)));
+                } else if (typeof arg === 'number') {
+                    // Numeric: stop any current tween/expression on this path first,
+                    // otherwise it would keep writing to the property next frame.
+                    unregisterDynamic(shape, path);
+                    const targetValue = valueTransform(arg);
+                    if (duration > 0) {
+                        registerTween(shape, path, targetValue, duration);
+                    } else {
+                        setPath(shape, path, targetValue);
+                    }
+                }
+            }
+        }
+
+        // per-frame: advance t, eval every registered dynamic expression, write result.
+        // an error-throwing expression is logged once and unregistered.
+        function tickDynamicProps(nowMs) {
+            t = nowMs / 1000;
+            for (const [mesh, props] of dynamicProps) {
+                for (const [path, fn] of props) {
+                    try {
+                        setPath(mesh, path, fn(t));
+                    } catch (e) {
+                        console.error(`Expression error on ${path}, unregistering:`, e.message);
+                        unregisterDynamic(mesh, path);
+                    }
+                }
+            }
+        }
+
+        const degToRad = (deg) => deg * Math.PI / 180;
+
         // animation / render loop
-        function animate() {
+        function animate(nowMs) {
             requestAnimationFrame(animate);
-
-            // In the future, any continuous rotation or movement updates go here
-
+            if (nowMs !== undefined) {
+                tickDynamicProps(nowMs);
+            }
             renderer.render(scene, camera);
         }
-        animate();
+        requestAnimationFrame(animate);
 
         // ============================================
         // INTERPRETER FUNCTIONS (called by eval)
@@ -160,12 +270,42 @@
             return;
         }
 
-        function move(shape, x = 0.0, y = 0.0, z = 0.0) {
-            return;
+        /**
+         * Move a shape. Each axis arg can be:
+         * 1) a number => snap (duration = 0) or tween (duration > 0)
+         * 2) a string => compiled to a per-frame expression, ex: "t * 0.5"
+         * 
+         * Mixed args are allowed.
+         * Ex: move(b, "t * 0.5", 0, 0, 2) updates X axis via expression while Y and Z tween to 0 over 2 seconds.
+         * 
+         * @param {THREE.Object3D} shape
+         * @param {number|string}  x         target X position
+         * @param {number|string}  y         target Y position
+         * @param {number|string}  z         target Z position
+         * @param {number}         duration  seconds; applies to numeric args only. 0 (default) = instant.
+        */
+        function move(shape, x = 0.0, y = 0.0, z = 0.0, duration = 0) {
+            if (!shape) return;
+            applyTransform(shape, 'position', x, y, z, duration);
         }
 
-        function rotate(shape, rx = 0.0, ry = 0.0, rz = 0.0) {
-            return;
+        /**
+         * Rotate a shape. Angles are in degrees, converted to radians internally for Three.js.
+         * Conversion is applied to expression results, too, so "t * 60" means 60 deg/sec.
+         * 
+         * @param {THREE.Object3D} shape
+         * @param {number|string}  rx        degrees around X (or expression string)
+         * @param {number|string}  ry        degrees around Y (or expression string)
+         * @param {number|string}  rz        degrees around Z (or expression string)
+         * @param {number}         duration  seconds; applies to numeric args only. 0 (default) = instant.
+         * Examples:
+         *   rotate(b1, 0, 90, 0)            snap to 90 deg around Y
+         *   rotate(b1, 0, 90, 0, 1)         tween to 90 over 1 second
+         *   rotate(b1, 0, "t * 60", 0)      spin at 60 deg/sec around Y, forever
+        */
+        function rotate(shape, rx = 0.0, ry = 0.0, rz = 0.0, duration = 0) {
+            if (!shape) return;
+            applyTransform(shape, 'rotation', rx, ry, rz, duration, degToRad);
         }
 
         function scale(shape, sx = 1.0, sy, sz) {
@@ -193,9 +333,12 @@
          * Remove all shapes from the scene. Lights and camera are preserved.
         */
         function clear() {
+            dynamicProps.clear(); // stop every tween/expression
+
             const toRemove = scene.children.filter(
                 child => child.isMesh || child.isPoints
             )
+
             for (const child of toRemove) {
                 scene.remove(child);
                 if (child.geometry) child.geometry.dispose();

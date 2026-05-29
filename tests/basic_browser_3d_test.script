@@ -1,2 +1,7 @@
 A cube appears. [browser_3d: let b1 = cube(0.5, 0.5, 0.5, "blue")]
 And another. [browser_3d: let b2 = cube(1, 1, 1, "red")]
+Snap the first cube to position. [browser_3d: move(b1, 1, 0, 0)]
+Tween up over 2 seconds. [browser_3d: move(b1, 0, 2, 0, 2)]
+Continuously spin it. [browser_3d: rotate(b1, 0, "t * 60", 0)]
+Stop the spin and snap to tilt. [browser_3d: rotate(b1, 0, 45, 0)]
+Clean up. [browser_3d: clear()]
