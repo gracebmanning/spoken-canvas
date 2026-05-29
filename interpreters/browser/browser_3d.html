@@ -254,12 +254,51 @@
             return mesh;
         }
 
+        /**
+         * Create a sphere or ellipsoid.
+         *
+         * A string in any size slot is the color, and unfilled sizes default to radx for the uniform case.
+         *
+         * @param {number} radx   radius on X. Default 0.5.
+         * @param {number} rady   radius on Y. Defaults to radx.
+         * @param {number} radz   radius on Z. Defaults to radx.
+         * @param {string} color  named color or hex. Default "white".
+         *
+        */
         function sphere(radx = 0.5, rady, radz, color = "white") {
-            return;
+            if (typeof rady === 'string') { color = rady; rady = undefined; }
+            else if (typeof radz === 'string') { color = radz; radz = undefined; }
+
+            if (rady === undefined) rady = radx;
+            if (radz === undefined) radz = radx;
+
+            const geometry = new THREE.SphereGeometry(1, 32, 32);
+            geometry.scale(radx, rady, radz);   // bake ellipsoid into vertices
+            const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
+            const mesh = new THREE.Mesh(geometry, material);
+            scene.add(mesh);
+            return mesh;
         }
 
+        /**
+         * Create a torus (donut shape).
+         * String shorthand: torus(0.6, "orange") -> outer 0.6, default tube, orange.
+         *
+         * @param {number} radx   outer ring radius (center of torus to center of tube). Default 0.5.
+         * @param {number} rady   tube radius (thickness of the ring). Default 0.25.
+         * @param {string} color  named color or hex. Default "white".
+         *
+         */
         function torus(radx = 0.5, rady = 0.25, color = "white") {
-            return;
+            if (typeof rady === 'string') { color = rady; rady = 0.25; }
+
+            // TorusGeometry(outerRadius, tubeRadius, radialSegments, tubularSegments)
+            // 16/32 segments is a good smoothness/cost balance for typical sizes.
+            const geometry = new THREE.TorusGeometry(radx, rady, 16, 32);
+            const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
+            const mesh = new THREE.Mesh(geometry, material);
+            scene.add(mesh);
+            return mesh;
         }
 
         function tube(rad1 = 0.5, rad2, height = 0.5, color = "white") {
