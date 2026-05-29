@@ -308,8 +308,29 @@
             applyTransform(shape, 'rotation', rx, ry, rz, duration, degToRad);
         }
 
-        function scale(shape, sx = 1.0, sy, sz) {
-            return;
+        /**
+         * Scale a shape.
+         * 
+         * Shorthand: if sy or sz is undefined, it defaults to sx. So
+         *   scale(b1, 2)            -> uniform 2.0 on all three axes
+         *   scale(b1, "1 + 0.2 * Math.sin(t * 2)")  -> uniform pulse via expression
+         * To scale only one axis, pass 1 for the others explicitly:
+         *   scale(b1, 2, 1, 1)      -> stretch X only, leave Y/Z at 1.0
+         * 
+         * Note: calling scale(b1) with no other args resets to (1, 1, 1).
+         * 
+         * @param {THREE.Object3D} shape
+         * @param {number|string}  sx        scale factor on X
+         * @param {number|string}  sy        scale factor on Y (defaults to sx)
+         * @param {number|string}  sz        scale factor on Z (defaults to sx)
+         * @param {number}         duration  seconds; applies to numeric args only. 0 (default) = instant.
+        */
+        function scale(shape, sx = 1.0, sy, sz, duration = 0) {
+            if (!shape) return;
+            if (sy === undefined) sy = sx;
+            if (sz === undefined) sz = sx;
+
+            applyTransform(shape, 'scale', sx, sy, sz, duration);
         }
 
         // Needs attention: TD version took *shapes as a param
