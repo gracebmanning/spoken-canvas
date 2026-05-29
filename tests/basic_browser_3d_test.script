@@ -1,0 +1,2 @@
+A cube appears. [browser_3d: let b1 = cube(0.5, 0.5, 0.5, "blue")]
+And another. [browser_3d: let b2 = cube(1, 1, 1, "red")]

@@ -32,7 +32,7 @@
 
         #debug {
             position: absolute;
-            top: 10px;
+            bottom: 10px;
             right: 10px;
             color: red;
             font-family: monospace;
@@ -47,7 +47,7 @@
 
 <body>
     <canvas id="canvas"></canvas>
-    <div id="debug">Connecting...</div>
+    <div id="debug">3D: Connecting...</div>
 
     <script type="module">
         import * as THREE from 'three';
@@ -65,11 +65,11 @@
         };
 
         function debug(msg) {
-            console.log(msg);
-            debugEl.textContent = msg;
+            console.log(`3D: ${msg}`);
+            debugEl.textContent = `3D: ${msg}`;
         }
 
-        debug('Browser 3D Interpreter starting...');
+        debug('3D: Browser 3D Interpreter starting...');
 
         // ============================================
         // THREE.JS SETUP
@@ -77,7 +77,7 @@
         const canvas = document.getElementById('canvas');
 
         // initialize scene
-        const scene = new THREE.scene();
+        const scene = new THREE.Scene();
 
         // initialize camera (Field of View, Aspect Ratio, Near clipping, Far clipping)
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -122,10 +122,116 @@
         // ============================================
         // INTERPRETER FUNCTIONS (called by eval)
         // ============================================
+        /**
+         * Create a box mesh and add it to the scene.
+         * @param {number} sizex    edge length on X axis. Defaults to 1.0.
+         * @param {number} sizey    edge length on Y axis. Defaults to sizex.
+         * @param {number} sizez    edge length on Z axis. Defaults to sizex.
+         * @param {string} color    named color (ex: "red") or hex color code string. Defaults to "white".
+         * @return {THREE.mesh}     the created cube mesh.
+        */
+        function cube(sizex = 1.0, sizey, sizez, color = "white") {
+            if (typeof sizey === 'string') { color = sizey; sizey = undefined; }
+            else if (typeof sizez === 'string') { color = sizez; sizez = undefined; }
+
+            if (sizey === undefined) sizey = sizex;
+            if (sizez === undefined) sizez = sizex;
+
+            const geometry = new THREE.BoxGeometry(sizex, sizey, sizez);
+            const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
+            const mesh = new THREE.Mesh(geometry, material);
+            scene.add(mesh);
+            return mesh;
+        }
+
+        function sphere(radx = 0.5, rady, radz, color = "white") {
+            return;
+        }
+
+        function torus(radx = 0.5, rady = 0.25, color = "white") {
+            return;
+        }
+
+        function tube(rad1 = 0.5, rad2, height = 0.5, color = "white") {
+            return;
+        }
+
+        function cloud(density = 1.0, spread = 1.0, color = "white") {
+            return;
+        }
+
+        function move(shape, x = 0.0, y = 0.0, z = 0.0) {
+            return;
+        }
+
+        function rotate(shape, rx = 0.0, ry = 0.0, rz = 0.0) {
+            return;
+        }
+
+        function scale(shape, sx = 1.0, sy, sz) {
+            return;
+        }
+
+        // Needs attention: TD version took *shapes as a param
+        function audio_reactive(shapes, low = 0.8, high = 1.0) {
+            return;
+        }
+
+        function color(shape, color) {
+            return;
+        }
+
+        function opacity(shape, value = 1.0) {
+            return;
+        }
+
+        function remove(shape) {
+            return;
+        }
+
+        /**
+         * Remove all shapes from the scene. Lights and camera are preserved.
+        */
+        function clear() {
+            const toRemove = scene.children.filter(
+                child => child.isMesh || child.isPoints
+            )
+            for (const child of toRemove) {
+                scene.remove(child);
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    // a mesh may carry an array of materials; handle both cases.
+                    if (Array.isArray(child.material)) {
+                        for (const m of child.material) m.dispose();
+                    } else {
+                        child.material.dispose();
+                    }
+                }
+            }
+        }
 
         // ============================================
         // MAKE FUNCTIONS GLOBALLY ACCESSIBLE
         // ============================================
+        // Exposed on window so eval'd commands (which run in global scope) can call them.
+        // THREE is exposed so a command can reach for raw Three.js when a helper doesn't cover what it needs.
+        window.THREE = THREE;
+        window.scene = scene;
+        window.camera = camera;
+        window.renderer = renderer;
+        window.cube = cube;
+        window.sphere = sphere;
+        window.torus = torus;
+        window.tube = tube;
+        window.cloud = cloud;
+        window.move = move;
+        window.rotate = rotate;
+        window.scale = scale;
+        window.audio_reactive = audio_reactive;
+        window.color = color;
+        window.opacity = opacity;
+        window.remove = remove;
+        window.clear = clear;
 
         // ============================================
         // WEBSOCKET CONNECTION
@@ -150,7 +256,6 @@
                 const progress = scriptState.totalWords > 0 ?
                     (scriptState.position / scriptState.totalWords * 100).toFixed(0) : 0;
                 debug(`Position: ${scriptState.position}/${scriptState.totalWords} (${progress}%)`);
-                updateScriptDisplay();
             },
         });
 
