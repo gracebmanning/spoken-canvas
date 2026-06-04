@@ -119,6 +119,7 @@
         let t = 0; // seconds since page load
 
         // mesh => Map of "prop.subprop" path => function(t) => value
+        // Map<THREE.Object3D, Map<string, function>>
         const dynamicProps = new Map();
 
         function registerDynamic(mesh, path, fn) {
@@ -433,8 +434,28 @@
             return;
         }
 
+        /**
+         * Remove the specified shape from the scene.
+         * 
+         * @param {THREE.Object3D} shape
+        */
         function remove(shape) {
-            return;
+            if (!shape) return;
+
+            dynamicProps.delete(shape); // remove any active tweens/expressions
+
+            scene.remove(shape); // remove from scene
+
+            // dispose of geometry and materials
+            if (shape.geometry) shape.geometry.dispose();
+            if (shape.material) {
+                // a mesh may carry an array of materials; handle both cases.
+                if (Array.isArray(shape.material)) {
+                    for (const m of shape.material) m.dispose();
+                } else {
+                    shape.material.dispose();
+                }
+            }
         }
 
         /**
