@@ -304,21 +304,37 @@
             return;
         }
 
+        // Cached white circular sprite for rendering spherical cloud points.
+        let _circleTexture = null;
+        function getCircleTexture() {
+            if (_circleTexture) return _circleTexture;
+
+            const size = 64;
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.beginPath();
+            ctx.arc(size / 2, size / 2, size / 2 * 0.9, 0, Math.PI * 2);
+            ctx.fillStyle = 'white';   // white so material.color tints it
+            ctx.fill();
+            _circleTexture = new THREE.CanvasTexture(canvas);
+            return _circleTexture;
+        }
+
         /**
          * Create a point cloud. Points are scattered with a Gaussian distribution (dense
          * core, soft edges) and drawn via THREE.Points.
          *
-         * @param {number} density  0..1, fraction of MAX_POINTS used. 1.0 = 100
-         *                           points, 0.5 = 50.
-         * @param {number} spread    standard deviation of the scatter — larger
-         *                           is a wider, looser cloud. 1.0 is a good
-         *                           visible default; 0.5 tighter, 2.0 wider.
+         * @param {number} quantity   0..1, fraction of MAX_POINTS used. 1.0 = 100 points, 0.5 = 50.
+         * @param {number} spread    standard deviation of the scatter — larger is a wider, looser cloud.
+         *                           1.0 is a good visible default; 0.5 tighter, 2.0 wider.
          * @param {string} color     named color or hex. Default "white".
+         * @param {string} shape     point shape: "circle" (default, round dot) or "square".
          *
          * Returns a THREE.Points object.
          *
          */
-        function cloud(density = 1.0, spread = 1.0, color = "white") {
+        function cloud(quantity = 1.0, spread = 1.0, color, shape) {
             // Box-Muller transform: a normally-distributed random number (mean 0, std dev 1).
             // Used to scatter points with a dense core and wispy edges.
             function gaussianRandom() {
@@ -328,29 +344,45 @@
                 return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
             }
 
-            // String shorthand: cloud(0.5, "cyan") -> density 0.5, default spread.
-            if (typeof spread === 'string') { color = spread; spread = 1.0; }
+            // classify the trailing args
+            const SHAPE_WORDS = ['circle', 'square'];
+            let resolvedSpread = 1.0, resolvedColor = 'white', resolvedShape = 'circle';
+            for (const arg of [spread, color, shape]) {
+                if (typeof arg === 'number') {
+                    resolvedSpread = arg;
+                } else if (typeof arg === 'string') {
+                    const lower = arg.toLowerCase();
+                    if (SHAPE_WORDS.includes(lower)) resolvedShape = lower;
+                    else resolvedColor = arg;
+                }
+            }
 
             const MAX_POINTS = 100;
-            density = Math.max(0, Math.min(1, density));
-            const count = Math.max(4, Math.round(MAX_POINTS * density));
+            quantity = Math.max(0, Math.min(1, quantity));
+            const count = Math.max(4, Math.round(MAX_POINTS * quantity));
 
             // Three coordinates per point, scattered by a Gaussian * spread.
             const positions = new Float32Array(count * 3);
             for (let i = 0; i < count; i++) {
-                positions[i * 3] = gaussianRandom() * spread;
-                positions[i * 3 + 1] = gaussianRandom() * spread;
-                positions[i * 3 + 2] = gaussianRandom() * spread;
+                positions[i * 3] = gaussianRandom() * resolvedSpread;
+                positions[i * 3 + 1] = gaussianRandom() * resolvedSpread;
+                positions[i * 3 + 2] = gaussianRandom() * resolvedSpread;
             }
 
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
             const material = new THREE.PointsMaterial({
-                color: parseColor(color),
+                color: parseColor(resolvedColor),
                 size: 0.1,               // world-unit point size; first thing to tune if too small/large
                 sizeAttenuation: true,   // points shrink with distance (depth cue)
             });
+
+            if (resolvedShape != 'square') {
+                material.map = getCircleTexture();
+                material.alphaTest = 0.5; // discard corner fragments -> disc, with correct depth sorting
+                material.transparent = true;
+            }
 
             const points = new THREE.Points(geometry, material);
             scene.add(points);
