@@ -300,8 +300,26 @@
             return mesh;
         }
 
+        /**
+         * Create a tube: cylinder, cone, or truncated cone (frustum).
+         * 
+         * @param {number} rad1     top radius. Default 0.5.
+         * @param {number} rad2     bottom radius. Defaults to rad1.
+         * @param {number} height   height. Default 0.5.
+         * @param {string} color    named color or hex value. Default "white".
+        */
         function tube(rad1 = 0.5, rad2, height = 0.5, color = "white") {
-            return;
+            if (typeof rad2 === 'string') { color = rad2; rad2 = undefined }
+            else if (typeof height === 'string') { color = height; height = undefined }
+
+            if (rad2 === undefined) rad2 = rad1; // cylinder by default
+            if (height === undefined) height = 0.5;
+
+            const geometry = new THREE.CylinderGeometry(rad1, rad2, height, 32);
+            const material = new THREE.MeshPhongMaterial({ color: parseColor(color) })
+            const mesh = new THREE.Mesh(geometry, material)
+            scene.add(mesh)
+            return mesh;
         }
 
         // Cached white circular sprite for rendering spherical cloud points.
@@ -458,12 +476,73 @@
             return;
         }
 
-        function color(shape, color) {
-            return;
+        /**
+         * Recolor a shape.
+         * 
+         * @param {THREE.Object3D}  shape
+         * @param {string}          color       named color or hex value.
+         * @param {number}          duration    seconds; 0 (default) = instant.
+        */
+        function color(shape, color, duration = 0) {
+            if (!shape || !shape.material) return;
+            const resolved = parseColor(color);
+
+            // stop any existing tweens
+            unregisterDynamic(shape, 'material.color.r');
+            unregisterDynamic(shape, 'material.color.g');
+            unregisterDynamic(shape, 'material.color.b');
+
+            if (duration > 0 && shape.material.color) {
+                const target = new THREE.Color(resolved);
+                registerTween(shape, 'material.color.r', target.r, duration);
+                registerTween(shape, 'material.color.g', target.g, duration);
+                registerTween(shape, 'material.color.b', target.b, duration);
+            } else {
+                const mats = Array.isArray(shape.material) ? shape.material : [shape.material];
+                for (const m of mats) {
+                    if (m.color) m.color.set(resolved);
+                }
+            }
         }
 
-        function opacity(shape, value = 1.0) {
-            return;
+        /**
+         * Set a shape's opacity (0 = invisible, 1 = opaque).
+         * 
+         * @param {THREE.Object3D}  shape
+         * @param {number|string}   value       0->1. Default 1.0.
+         * @param {number}          duration    seconds; numeric value only. 0 (default) = instant.
+        */
+        function opacity(shape, value = 1.0, duration = 0) {
+            if (!shape || !shape.material) return;
+            const mats = Array.isArray(shape.material) ? shape.material : [shape.material];
+            const path = 'material.opacity';
+
+            const setTransparent = (m, on) => {
+                if (m.transparent !== on) {
+                    m.transparent = on;
+                    m.needsUpdate = true;
+                }
+            }
+
+            if (typeof value === 'string') {
+                // expression -> per-frame opacity, e.g. "0.5 + 0.5 * Math.sin(t)".
+                // it can dip below 1 at any time, so blending must stay on.
+                for (const m of mats) setTransparent(m, true);
+                registerDynamic(shape, path, compileExpression(value));
+                return;
+            }
+
+            // numeric: stop any running fade/expression first so it can't keep writing the property next frame.
+            unregisterDynamic(shape, path);
+            if (duration > 0) {
+                for (const m of mats) setTransparent(m, true);   // dips below 1 mid-fade
+                registerTween(shape, path, value, duration);
+            } else {
+                for (const m of mats) {
+                    m.opacity = value;
+                    setTransparent(m, value < 1);   // only blend when not fully opaque
+                }
+            }
         }
 
         /**

@@ -17,4 +17,8 @@ Now create a larger cloud with fewer points, and make them square. [browser_3d: 
 Move that one aside. [browser_3d: move(cl2, 2, 0, 0)]
 Spin both. [browser_3d: rotate(cl1, 0, "t * 30", 0)] [browser_3d: rotate(cl2, 0, "t * 30", 0)]
 This sphere is annoying me, let's delete it. [browser_3d: remove(s1)]
+That's totally tubular. [browser_3d: let tu1 = tube(0.6, 0.6, 1.2, "mauve")]
+Move it over. [browser_3d: move(tu1, -2, -2, 0, 1)]
+Let's change that color. [browser_3d: color(tu1, "amber", 2)]
+And maybe fade it a little. [browser_3d: opacity(tu1, 0.5, 1)]
 Clean up. [browser_3d: clear()]
