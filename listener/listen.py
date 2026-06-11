@@ -240,7 +240,7 @@ def parse_script(script_path):
         content = f.read()
 
     # Find all bracketed commands with their positions
-    command_pattern = r'\[([^\]]+)\]'
+    command_pattern = r'\[((?:[^\[\]]|\[[^\[\]]*\])*)\]'
     matches = list(re.finditer(command_pattern, content))
 
     # Build plain text by removing commands
@@ -256,7 +256,7 @@ def parse_script(script_path):
     current_text = []
 
     # Split plain text by sentence boundaries (period, double newline, or end of text)
-    sentence_parts = re.split(r'\.(?:\s+|\n+)|(?:\n\s*\n)', plain_text)
+    sentence_parts = re.split(r'[.!?](?:\s+|\n+)|(?:\n\s*\n)', plain_text)
 
     for part in sentence_parts:
         if not part.strip():
