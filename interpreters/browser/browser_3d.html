@@ -110,6 +110,58 @@
         });
 
         // ============================================
+        // AUDIO ANALYSIS
+        // ============================================
+        // Lazily opens the mic on the first audio_reactive() call, then runs an RMS meter on the live signal each frame.
+        // Exposes a smoothed 0..1 loudness as audiolevel for the scale dynamics.
+        let audioCtx = null;
+        let analyser = null;
+        let timeData = null;
+        let audioReady = false;
+        let audioLevel = 0; // smoothed RMS loudness, 0..1, refreshed per frame
+
+        const RMS_GAIN = 5;             // voice RMS is small; lift it toward 0..1 (tune knob)
+        const AUDIO_SMOOTHING = 0.8;    // 0 = instant & jittery, ->1 = heavy lag (tune knob)
+
+        // The scale a shape had when it became reactive, so the pulse multiplies
+        // onto its own size rather than replacing it. scale() clears the entry.
+        const audioBaseScale = new WeakMap();   // shape -> THREE.Vector3
+
+        function initAudio() {
+            if (audioCtx) return;       // already requested — don't prompt twice
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                console.error("audio_reactive: getUserMedia unavailable — needs a secure context (https or localhost). Opening via file:// may block the mic.");
+                return;
+            }
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            audioCtx.resume?.();        // contexts often start suspended without a user gesture
+            navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+                const source = audioCtx.createMediaStreamSource(stream);
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 1024;
+                source.connect(analyser);
+                timeData = new Uint8Array(analyser.fftSize);
+                audioReady = true;
+            }).catch((err) => {
+                console.error("audio_reactive: microphone unavailable —", err.message);
+            });
+        }
+
+        function updateAudio() {
+            if (!audioReady) return;
+            analyser.getByteTimeDomainData(timeData);   // 0..255 per sample, 128 = silence
+            let sumSq = 0;
+            for (let i = 0; i < timeData.length; i++) {
+                const v = (timeData[i] - 128) / 128;    // -1..1
+                sumSq += v * v;
+            }
+            const rms = Math.sqrt(sumSq / timeData.length);
+            const target = Math.min(1, rms * RMS_GAIN);
+            // exponential moving average -> temporal smoothing (the lag/jitter knob)
+            audioLevel = audioLevel * AUDIO_SMOOTHING + target * (1 - AUDIO_SMOOTHING);
+        }
+
+        // ============================================
         // ANIMATION ENGINE
         // ============================================
         // Accepts:
@@ -222,6 +274,7 @@
         function animate(nowMs) {
             requestAnimationFrame(animate);
             if (nowMs !== undefined) {
+                updateAudio(); // refresh audioLevel before dynamics read it
                 tickDynamicProps(nowMs);
             }
             renderer.render(scene, camera);
@@ -468,12 +521,34 @@
             if (sy === undefined) sy = sx;
             if (sz === undefined) sz = sx;
 
+            // take over scale control and drop audioreactivity
+            audioBaseScale.delete(shape);
+
             applyTransform(shape, 'scale', sx, sy, sz, duration);
         }
 
-        // Needs attention: TD version took *shapes as a param
         function audio_reactive(shapes, low = 0.8, high = 1.0) {
-            return;
+            const list = Array.isArray(shapes) ? shapes : [shapes]; // normalize to array
+            initAudio();
+
+            for (const shape of list) {
+                if (!shape) continue;
+
+                // Capture the pulse base.
+                // If the shape is already audio reactive, reuse the stored base so re-calling (ex: to change low/high)
+                // doesn't compound onto a mid-pulse value.
+                let base = audioBaseScale.get(shape);
+                if (!base) {
+                    base = shape.scale.clone();
+                    audioBaseScale.set(shape, base);
+                }
+
+                // One audio factor drives all three axes (uniform pulse).
+                for (const axis of ['x', 'y', 'z']) {
+                    const b = base[axis];
+                    registerDynamic(shape, `scale.${axis}`, () => b * (low + (high - low) * audioLevel))
+                }
+            }
         }
 
         /**
