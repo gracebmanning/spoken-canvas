@@ -134,7 +134,22 @@
                 return;
             }
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            audioCtx.resume?.();        // contexts often start suspended without a user gesture
+
+            const tryResume = (why) => {
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume().then(() => console.log(`audio_reactive: context resumed (${why}) -> ${audioCtx.state}`))
+                }
+            }
+
+            const resumeOnGesture = () => {
+                tryResume('user gesture');
+                window.removeEventListener('pointerDown', resumeOnGesture);
+                window.removeEventListener('keydown', resumeOnGesture);
+            }
+
+            window.addEventListener('pointerdown', resumeOnGesture);
+            window.addEventListener('keydown', resumeOnGesture);
+            // audioCtx.resume?.();        // contexts often start suspended without a user gesture
             navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
                 const source = audioCtx.createMediaStreamSource(stream);
                 analyser = audioCtx.createAnalyser();
@@ -142,6 +157,8 @@
                 source.connect(analyser);
                 timeData = new Uint8Array(analyser.fftSize);
                 audioReady = true;
+                tryResume('mic granted');
+                console.log(`audio_reactive: mic ready, context '${audioCtx.state}'. If that reads 'suspended', click the page once.`)
             }).catch((err) => {
                 console.error("audio_reactive: microphone unavailable —", err.message);
             });
@@ -159,6 +176,7 @@
             const target = Math.min(1, rms * RMS_GAIN);
             // exponential moving average -> temporal smoothing (the lag/jitter knob)
             audioLevel = audioLevel * AUDIO_SMOOTHING + target * (1 - AUDIO_SMOOTHING);
+            window.audioLevel = audioLevel; // for debug purposes
         }
 
         // ============================================
@@ -527,6 +545,17 @@
             applyTransform(shape, 'scale', sx, sy, sz, duration);
         }
 
+        /**
+         * Make shape(s) reactive to microphone audio.
+         * 
+         * Call on one or more shapes.
+         * Ex: audio_reactive(tu1, 0.8, 1.3)
+         * Ex: audio_reactive([t1, b2], 0.8, 1.3)
+         * 
+         * @param {THREE.Object3D|[THREE.Object3D]}     shape
+         * @param {number}                              low        Scale factor range low end.
+         * @param {number}                              high       Scale factor range high end.
+        */
         function audio_reactive(shapes, low = 0.8, high = 1.0) {
             const list = Array.isArray(shapes) ? shapes : [shapes]; // normalize to array
             initAudio();
