@@ -143,13 +143,13 @@
 
             const resumeOnGesture = () => {
                 tryResume('user gesture');
-                window.removeEventListener('pointerDown', resumeOnGesture);
+                window.removeEventListener('pointerdown', resumeOnGesture);
                 window.removeEventListener('keydown', resumeOnGesture);
             }
 
             window.addEventListener('pointerdown', resumeOnGesture);
             window.addEventListener('keydown', resumeOnGesture);
-            // audioCtx.resume?.();        // contexts often start suspended without a user gesture
+
             navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
                 const source = audioCtx.createMediaStreamSource(stream);
                 analyser = audioCtx.createAnalyser();
@@ -290,7 +290,7 @@
 
         const vertexNoise = new Map();
         const NOISE_MAX_DRIFT = 0.4; // units of drift at intensity 1
-        const NOISE_TIME = 0.5; // temporal speed of the field
+        const NOISE_TIME = 0.8; // temporal speed of the field
         const NOISE_SCALE = 0.8; // spatial frequency of the field
 
         function updateVertexNoise(t) {
@@ -316,7 +316,7 @@
             if (nowMs !== undefined) {
                 updateAudio(); // refresh audioLevel before dynamics read it
                 tickDynamicProps(nowMs);
-                updateVertexNoise(t); // drift shape verties
+                updateVertexNoise(t); // drift shape vertices
             }
             renderer.render(scene, camera);
         }
@@ -331,18 +331,18 @@
          * @param {number} sizey    edge length on Y axis. Defaults to sizex.
          * @param {number} sizez    edge length on Z axis. Defaults to sizex.
          * @param {string} color    named color (ex: "red") or hex color code string. Defaults to "white".
+         * @param {number} x        X position. Defaults to 0.
+         * @param {number} y        Y position. Defaults to 0.
          * @return {THREE.mesh}     the created cube mesh.
         */
-        function cube(sizex = 1.0, sizey, sizez, color = "white") {
-            if (typeof sizey === 'string') { color = sizey; sizey = undefined; }
-            else if (typeof sizez === 'string') { color = sizez; sizez = undefined; }
-
+        function cube(sizex = 1.0, sizey, sizez, color = "white", x = 0, y = 0) {
             if (sizey === undefined) sizey = sizex;
             if (sizez === undefined) sizez = sizex;
 
             const geometry = new THREE.BoxGeometry(sizex, sizey, sizez);
             const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
             const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, 0);
             scene.add(mesh);
             return mesh;
         }
@@ -356,12 +356,11 @@
          * @param {number} rady   radius on Y. Defaults to radx.
          * @param {number} radz   radius on Z. Defaults to radx.
          * @param {string} color  named color or hex. Default "white".
+         * @param {number} x      X position. Defaults to 0.
+         * @param {number} y      Y position. Defaults to 0.
          *
         */
-        function sphere(radx = 0.5, rady, radz, color = "white") {
-            if (typeof rady === 'string') { color = rady; rady = undefined; }
-            else if (typeof radz === 'string') { color = radz; radz = undefined; }
-
+        function sphere(radx = 0.5, rady, radz, color = "white", x = 0, y = 0) {
             if (rady === undefined) rady = radx;
             if (radz === undefined) radz = radx;
 
@@ -369,6 +368,7 @@
             geometry.scale(radx, rady, radz);   // bake ellipsoid into vertices
             const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
             const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, 0);
             scene.add(mesh);
             return mesh;
         }
@@ -380,16 +380,17 @@
          * @param {number} radx   outer ring radius (center of torus to center of tube). Default 0.5.
          * @param {number} rady   tube radius (thickness of the ring). Default 0.25.
          * @param {string} color  named color or hex. Default "white".
+         * @param {number} x      X position. Defaults to 0.
+         * @param {number} y      Y position. Defaults to 0.
          *
          */
-        function torus(radx = 0.5, rady = 0.25, color = "white") {
-            if (typeof rady === 'string') { color = rady; rady = 0.25; }
-
+        function torus(radx = 0.5, rady = 0.25, color = "white", x = 0, y = 0) {
             // TorusGeometry(outerRadius, tubeRadius, radialSegments, tubularSegments)
             // 16/32 segments is a good smoothness/cost balance for typical sizes.
             const geometry = new THREE.TorusGeometry(radx, rady, 16, 32);
             const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
             const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, 0);
             scene.add(mesh);
             return mesh;
         }
@@ -401,18 +402,17 @@
          * @param {number} rad2     bottom radius. Defaults to rad1.
          * @param {number} height   height. Default 0.5.
          * @param {string} color    named color or hex value. Default "white".
+         * @param {number} x      X position. Defaults to 0.
+         * @param {number} y      Y position. Defaults to 0.
         */
-        function tube(rad1 = 0.5, rad2, height = 0.5, color = "white") {
-            if (typeof rad2 === 'string') { color = rad2; rad2 = undefined }
-            else if (typeof height === 'string') { color = height; height = undefined }
-
+        function tube(rad1 = 0.5, rad2, height = 0.5, color = "white", x = 0, y = 0) {
             if (rad2 === undefined) rad2 = rad1; // cylinder by default
-            if (height === undefined) height = 0.5;
 
             const geometry = new THREE.CylinderGeometry(rad1, rad2, height, 32);
-            const material = new THREE.MeshPhongMaterial({ color: parseColor(color) })
-            const mesh = new THREE.Mesh(geometry, material)
-            scene.add(mesh)
+            const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, 0);
+            scene.add(mesh);
             return mesh;
         }
 
@@ -442,11 +442,13 @@
          *                           1.0 is a good visible default; 0.5 tighter, 2.0 wider.
          * @param {string} color     named color or hex. Default "white".
          * @param {string} shape     point shape: "circle" (default, round dot) or "square".
+         * @param {number} x      X position. Defaults to 0.
+         * @param {number} y      Y position. Defaults to 0.
          *
          * Returns a THREE.Points object.
          *
          */
-        function cloud(quantity = 1.0, spread = 1.0, color, shape) {
+        function cloud(quantity = 1.0, spread = 1.0, color = "white", shape = "circle", x = 0, y = 0) {
             // Box-Muller transform: a normally-distributed random number (mean 0, std dev 1).
             // Used to scatter points with a dense core and wispy edges.
             function gaussianRandom() {
@@ -456,19 +458,6 @@
                 return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
             }
 
-            // classify the trailing args
-            const SHAPE_WORDS = ['circle', 'square'];
-            let resolvedSpread = 1.0, resolvedColor = 'white', resolvedShape = 'circle';
-            for (const arg of [spread, color, shape]) {
-                if (typeof arg === 'number') {
-                    resolvedSpread = arg;
-                } else if (typeof arg === 'string') {
-                    const lower = arg.toLowerCase();
-                    if (SHAPE_WORDS.includes(lower)) resolvedShape = lower;
-                    else resolvedColor = arg;
-                }
-            }
-
             const MAX_POINTS = 150;
             quantity = Math.max(0, Math.min(1, quantity));
             const count = Math.max(4, Math.round(MAX_POINTS * quantity));
@@ -476,27 +465,28 @@
             // Three coordinates per point, scattered by a Gaussian * spread.
             const positions = new Float32Array(count * 3);
             for (let i = 0; i < count; i++) {
-                positions[i * 3] = gaussianRandom() * resolvedSpread;
-                positions[i * 3 + 1] = gaussianRandom() * resolvedSpread;
-                positions[i * 3 + 2] = gaussianRandom() * resolvedSpread;
+                positions[i * 3] = gaussianRandom() * spread;
+                positions[i * 3 + 1] = gaussianRandom() * spread;
+                positions[i * 3 + 2] = gaussianRandom() * spread;
             }
 
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
             const material = new THREE.PointsMaterial({
-                color: parseColor(resolvedColor),
+                color: parseColor(color),
                 size: 0.1,               // world-unit point size; first thing to tune if too small/large
                 sizeAttenuation: true,   // points shrink with distance (depth cue)
             });
 
-            if (resolvedShape != 'square') {
+            if (shape != 'square') {
                 material.map = getCircleTexture();
                 material.alphaTest = 0.5; // discard corner fragments -> disc, with correct depth sorting
                 material.transparent = true;
             }
 
             const points = new THREE.Points(geometry, material);
+            points.position.set(x, y, 0);
             scene.add(points);
             return points;
         }
