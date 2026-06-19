@@ -1,0 +1,37 @@
+Let's zoom in. Past the visible, past the cells, past the molecules, all the way down to the building block of everything. [browser_2d: clear()] [browser_3d: clear()] [browser_3d: let block = cube(1.2, 1.2, 1.2, "gray")] [browser_3d: rotate(block, "t * 15", "t * 20", 0)]
+
+It looks solid: a simple, ordinary block of matter. [browser_2d: let title = text("THE ATOM", center.x, 120, 72, "white")]
+
+But zoom in far enough, and that solid block dissolves into something far stranger. [browser_3d: opacity(block, 0, 1.5)]
+
+At the heart of every atom sits a dense, heavy core, the nucleus. [browser_3d: remove(block)] [browser_3d: let nucleus = sphere(0.55, 0.55, 0.55, "red")]
+
+It's a tight bundle of protons and neutrons, humming with energy. Listen, it pulses as I speak. [browser_3d: audio_reactive(nucleus, 0.9, 1.18)]
+
+Around that core live the electrons. But they don't circle it like planets around a sun. [browser_3d: let ecloud = cloud(1.0, 1.6, "cyan")]
+
+Each electron is really a smear of probability, a restless cloud of "maybe here, maybe there." [browser_3d: noise(ecloud, 0.6)]
+
+To tame that fuzziness, we picture the cloud as shells, or orbitals, each one a rung of energy. [browser_3d: let shell1 = torus(1.7, 0.02, "white")] [browser_3d: rotate(shell1, 75, "t * 18", 0)]
+
+Outer shells sit farther from the core and hold the most energetic electrons. [browser_3d: let shell2 = torus(2.3, 0.02, "violet")] [browser_3d: rotate(shell2, 75, "t * 12", 55)] [browser_3d: opacity(shell2, 0.55, 1.5)]
+
+We can also flatten the whole thing into a simple energy-level diagram. [browser_2d: let base = line(1520, 800, 1840, 800, "cyan", 4)] [browser_2d: let lift = line(1520, 630, 1840, 630, "white", 4)]
+
+Each rung is an amount of energy an electron is allowed to have. [browser_2d: let elec = circle(15, "yellow", 1560, 800)] [browser_2d: let lbl = text("energy levels", 1680, 870, 30, "white")]
+
+Now feed it energy, a photon, a jolt of heat, and the atom drinks it in. [browser_3d: color(nucleus, "orange", 1)] [browser_3d: scale(nucleus, 1.35, 1.35, 1.35, 1)] [browser_3d: color(ecloud, "yellow", 1.5)]
+
+An electron leaps to a higher rung. [browser_2d: move(elec, 1560, 630, 1)] [browser_3d: let spark = sphere(0.09, 0.09, 0.09, "yellow", 1.2, 0.8)] [browser_3d: move(spark, 3.6, 2.2, 0, 1.8)] [browser_3d: opacity(spark, 0, 1.8)]
+
+But it can't stay excited. It falls back down, and releases the difference as a flash of light. [browser_2d: move(elec, 1560, 800, 1.2)] [browser_3d: scale(nucleus, 1, 1, 1, 1)] [browser_3d: let beam = tube(0.04, 0.04, 5, "white")] [browser_3d: rotate(beam, 0, 0, 90)] [browser_3d: opacity(beam, 0, 1.5)]
+
+That glow, light shed by settling electrons, is how we see color, fire, and starlight. [browser_3d: color(ecloud, "cyan", 2)] [browser_2d: let glow = text("light", center.x, 980, 44, "yellow")] [browser_2d: fade(glow, 0, 2.5)]
+
+And it's never just one. Trillions of these tiny systems, humming together, make up you, this room, and the whole world. [browser_3d: audio_reactive([nucleus, ecloud], 0.9, 1.2)] [browser_3d: noise(ecloud, 0.85)]
+
+From a tight little nucleus out to the soft edge of its electron cloud, that is the atom. [browser_3d: opacity(shell1, 0.25, 2)] [browser_3d: opacity(shell2, 0.25, 2)]
+
+Small enough to overlook. Big enough to be everything. [browser_2d: fade(title, 0, 3)] [browser_3d: opacity(ecloud, 0, 3)] [browser_3d: opacity(nucleus, 0, 3)]
+
+Thanks for zooming in. [browser_2d: clear()] [browser_3d: clear()]
