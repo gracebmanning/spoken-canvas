@@ -76,6 +76,27 @@ def normalize_text_for_matching(text):
     return words
 
 
+def wrap_text(text, font, max_width):
+    """
+    Break text into lines that each fit within max_width pixels when rendered
+    with the given pygame font. Wraps on word boundaries; a single word longer
+    than max_width is left on its own line rather than split mid-word.
+    """
+    lines = []
+    current = ""
+    for word in text.split():
+        trial = word if not current else f"{current} {word}"
+        if font.size(trial)[0] <= max_width:
+            current = trial
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
 def create_recognizer(recognizer_type, model_path=None, sample_rate=16000):
     """
     Factory function to create a speech recognizer based on type.
@@ -234,7 +255,8 @@ def parse_script(script_path):
         - plain_text: Script with commands removed
         - commands: List of (word_index, command_string)
         - script_words: List of normalized words from script (for matching)
-        - sentences: List of (start_word_idx, end_word_idx, sentence_text) tuples
+        - sentences: List of (start_word_idx, end_word_idx, norm_text, raw_text) tuples
+          norm_text is normalized for matching; raw_text preserves case/punctuation for display
     """
     with open(script_path, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -253,32 +275,36 @@ def parse_script(script_path):
     # Commands act as natural sentence breaks
     sentences = []
     current_sentence_start = 0
-    current_text = []
 
-    # Split plain text by sentence boundaries (period, double newline, or end of text)
-    sentence_parts = re.split(r'[.!?](?:\s+|\n+)|(?:\n\s*\n)', plain_text)
+    # Split plain text by sentence boundaries (sentence-ending punctuation
+    # followed by whitespace, or a blank line). The lookbehind keeps the
+    # terminal punctuation attached to the sentence it ends, so the raw text
+    # we display still reads with proper capitalization and punctuation.
+    raw_parts = re.split(r'(?<=[.!?])\s+|\n\s*\n', plain_text)
 
-    for part in sentence_parts:
-        if not part.strip():
+    for raw in raw_parts:
+        raw = raw.strip()
+        if not raw:
             continue
 
-        # Get normalized words for this sentence part
-        part_words = normalize_text_for_matching(part)
+        # Normalized words drive position matching; raw text is for display only.
+        part_words = normalize_text_for_matching(raw)
         if not part_words:
             continue
 
-        # Add sentence
+        # Add sentence: (start, end, normalized_for_matching, raw_for_display)
         sentence_end = current_sentence_start + len(part_words)
         sentences.append((
             current_sentence_start,
             sentence_end,
-            ' '.join(part_words)
+            ' '.join(part_words),
+            raw
         ))
         current_sentence_start = sentence_end
 
     # If no sentences found, treat whole script as one sentence
     if not sentences and script_words:
-        sentences.append((0, len(script_words), ' '.join(script_words)))
+        sentences.append((0, len(script_words), ' '.join(script_words), plain_text.strip()))
 
     # Calculate word index for each command (based on normalized words)
     commands = []
@@ -335,7 +361,7 @@ class RealtimeListener:
 
         # Initialize Pygame status window
         pygame.init()
-        self.screen = pygame.display.set_mode((900, 230))
+        self.screen = pygame.display.set_mode((900, 300))
         pygame.display.set_caption("Real-time Listener")
         self.font = pygame.font.Font(None, 36)
         self.small_font = pygame.font.Font(None, 24)
@@ -349,8 +375,8 @@ class RealtimeListener:
             # We're at the end of the script
             return self.current_position
 
-        # Get the next expected sentence
-        sentence_start, sentence_end, expected_text = self.sentences[self.current_sentence_idx]
+        # Get the next expected sentence (match against normalized text)
+        sentence_start, sentence_end, expected_text, _ = self.sentences[self.current_sentence_idx]
         expected_words = expected_text.split()
 
         # Get accumulated words as a single string
@@ -454,10 +480,10 @@ class RealtimeListener:
 
                 # Show progress and next words to say
                 if new_position > self.current_position:
-                    # Get next sentence to say
+                    # Get next sentence to say (raw text, with case + punctuation)
                     next_sentence_text = ""
                     if self.current_sentence_idx < len(self.sentences):
-                        _, _, next_sentence_text = self.sentences[self.current_sentence_idx]
+                        _, _, _, next_sentence_text = self.sentences[self.current_sentence_idx]
                         # Show first 80 chars
                         if len(next_sentence_text) > 80:
                             next_sentence_text = next_sentence_text[:80] + "..."
@@ -504,17 +530,17 @@ class RealtimeListener:
         text_surface = self.small_font.render(heard_text, True, (100, 200, 100))
         self.screen.blit(text_surface, (10, y))
 
-        # Next sentence to say (helpful prompt)
+        # Next sentence to say (helpful prompt) — raw text with case + punctuation,
+        # wrapped to the window width instead of truncated with an ellipsis.
         y += 35
         if self.current_sentence_idx < len(self.sentences):
-            _, _, next_sentence_text = self.sentences[self.current_sentence_idx]
-            # Truncate if too long (fit in window width)
-            max_chars = 80
-            if len(next_sentence_text) > max_chars:
-                next_sentence_text = next_sentence_text[:max_chars] + "..."
-            next_text = f"Say next: {next_sentence_text}"
-            text_surface = self.small_font.render(next_text, True, (255, 215, 0))  # Gold color
-            self.screen.blit(text_surface, (10, y))
+            _, _, _, next_sentence_text = self.sentences[self.current_sentence_idx]
+            label_surface = self.small_font.render("Say next:", True, (255, 215, 0))  # Gold color
+            self.screen.blit(label_surface, (10, y))
+            for line in wrap_text(next_sentence_text, self.small_font, 880):
+                y += 28
+                line_surface = self.small_font.render(line, True, (255, 215, 0))
+                self.screen.blit(line_surface, (10, y))
         else:
             text_surface = self.small_font.render("✓ Script complete!", True, (100, 255, 100))
             self.screen.blit(text_surface, (10, y))
@@ -542,7 +568,7 @@ class RealtimeListener:
             return
 
         # Get current sentence end position
-        _, sentence_end, sentence_text = self.sentences[self.current_sentence_idx]
+        _, sentence_end, _, sentence_text = self.sentences[self.current_sentence_idx]
 
         print(f"\n>>> ADVANCING TO NEXT SENTENCE <<<")
         print(f"  Skipping: {sentence_text[:60]}...")
@@ -557,7 +583,7 @@ class RealtimeListener:
 
         # Show next sentence
         if self.current_sentence_idx < len(self.sentences):
-            _, _, next_sentence_text = self.sentences[self.current_sentence_idx]
+            _, _, _, next_sentence_text = self.sentences[self.current_sentence_idx]
             print(f"  Next: {next_sentence_text[:60]}...")
         else:
             print("  ✓ Reached end of script!")
