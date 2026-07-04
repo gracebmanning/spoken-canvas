@@ -1,0 +1,7 @@
+
+A cube appears. [browser_3d: let b1 = cube(0.5, 0.5, 0.5, "blue")]
+
+Let's begin with a circle. [browser_2d: let c1 = circle(50, "red")]
+
+Now another. [browser_2d: let c1 = circle(50, "green")]
+

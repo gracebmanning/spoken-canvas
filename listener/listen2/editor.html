@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Script Editor</title>
+
+  <!-- CodeMirror (code editor) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #212121;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 10px 16px;
+      background: #1a1a1a;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 0 0 auto;
+    }
+    header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0;
+    }
+    header .path {
+      font-size: 12px;
+      color: #888;
+      font-family: monospace;
+    }
+    header .counter {
+      margin-left: auto;
+      font-size: 12px;
+      color: #ffd54f;
+      font-family: monospace;
+      white-space: nowrap;
+    }
+    header .out-status {
+      font-size: 12px;
+      color: #ef5350;
+      font-family: monospace;
+      white-space: nowrap;
+    }
+    header .out-status.connected {
+      color: #66bb6a;
+    }
+
+    /* Responsive split: side by side when wide, stacked when narrow. */
+    .main {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    @media (min-width: 900px) {
+      .main { flex-direction: row; }
+    }
+    .pane {
+      flex: 1 1 50%;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .output-pane {
+      position: relative;
+      background: #000;
+      border-top: 1px solid #333;
+    }
+    @media (min-width: 900px) {
+      .output-pane { border-top: none; border-left: 1px solid #333; }
+    }
+
+    .CodeMirror {
+      height: 100%;
+      font-size: 14px;
+      font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+    /* The word the listener is currently on. */
+    .cm-current-word {
+      background: #ffd54f;
+      color: #000;
+      border-radius: 2px;
+    }
+
+    /* Layered interpreter iframes, scaled to fit the output pane. */
+    .frame {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 1920px;
+      height: 1080px;
+      border: 0;
+      background: transparent;
+      transform-origin: top left;
+    }
+    #frame-3d { z-index: 1; }
+    #frame-2d { z-index: 2; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Script Editor</h1>
+    <span class="path" id="script-path"></span>
+    <span class="counter" id="word-counter"></span>
+    <span class="out-status" id="out-status">output ●</span>
+  </header>
+
+  <div class="main">
+    <div class="pane editor-pane">
+      <textarea id="code"></textarea>
+    </div>
+    <div class="pane output-pane" id="stage">
+      <iframe class="frame" id="frame-3d" src="/interpreters/browser_3d.html"></iframe>
+      <iframe class="frame" id="frame-2d" src="/interpreters/browser_2d.html"></iframe>
+    </div>
+  </div>
+
+  <script>
+    const editor = CodeMirror.fromTextArea(document.getElementById("code"), {
+      lineNumbers: true,
+      lineWrapping: true,
+      theme: "material-darker",
+      mode: null,
+    });
+
+    // ---- Command relay --------------------------------------------------
+    // Commands are sent to the WebSocket relay (listener/serve.py on :8000),
+    // which broadcasts them to the interpreter iframes — same path as the
+    // original listener.py.
+    const INTERPRETER_TARGETS = ["browser_2d", "browser_3d", "td"];
+    const DEFAULT_TARGET = "browser_2d";
+    const RELAY_URL = "ws://" + (location.hostname || "localhost") + ":8000/ws";
+    const outStatusEl = document.getElementById("out-status");
+    let relay = null;
+
+    function setOutStatus(connected) {
+      outStatusEl.classList.toggle("connected", connected);
+      outStatusEl.textContent = connected ? "output ● connected" : "output ● offline";
+    }
+
+    function connectRelay() {
+      try {
+        relay = new WebSocket(RELAY_URL);
+        relay.onopen = () => setOutStatus(true);
+        relay.onclose = () => { setOutStatus(false); setTimeout(connectRelay, 2000); };
+        relay.onerror = () => {};
+      } catch (e) {
+        setOutStatus(false);
+        setTimeout(connectRelay, 2000);
+      }
+    }
+
+    function sendCommand(target, code) {
+      if (relay && relay.readyState === WebSocket.OPEN) {
+        relay.send(JSON.stringify({ target, command: "execute", code }));
+      }
+    }
+
+    // Route "browser_2d: circle(...)" -> { target, code }; an unrecognized or
+    // missing prefix falls back to the default target (mirrors listener.py).
+    function splitCommandTarget(content) {
+      const i = content.indexOf(":");
+      if (i >= 0) {
+        const prefix = content.slice(0, i).trim();
+        if (INTERPRETER_TARGETS.includes(prefix)) {
+          return { target: prefix, code: content.slice(i + 1).trim() };
+        }
+      }
+      return { target: DEFAULT_TARGET, code: content };
+    }
+
+    function executeCommandToken(token) {
+      const raw = editor.getValue().slice(token.from, token.to); // "[ ... ]"
+      const content = raw.slice(1, -1).trim();
+      if (content.toUpperCase() === "RESET()") {
+        INTERPRETER_TARGETS.forEach((t) => sendCommand(t, "clear()"));
+        return;
+      }
+      const { target, code } = splitCommandTarget(content);
+      sendCommand(target, code);
+    }
+
+    // ---- Output iframe scaling ------------------------------------------
+    // Interpreters render at a fixed 1920x1080; scale to fit the output pane.
+    const stage = document.getElementById("stage");
+    const frames = [document.getElementById("frame-3d"), document.getElementById("frame-2d")];
+
+    function fitStage() {
+      const w = stage.clientWidth, h = stage.clientHeight;
+      const scale = Math.min(w / 1920, h / 1080);
+      const offsetX = (w - 1920 * scale) / 2;
+      const offsetY = (h - 1080 * scale) / 2;
+      const transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+      frames.forEach((f) => { f.style.transform = transform; });
+    }
+
+    window.addEventListener("resize", fitStage);
+    if (window.ResizeObserver) new ResizeObserver(fitStage).observe(stage);
+    fitStage();
+
+    // ---- Word tracking --------------------------------------------------
+    // "Words" are the spoken words of the plain text PLUS each bracketed
+    // [ ... ] command, treated as a single word. They're merged in reading
+    // order. We track a "current word" and highlight it; Left/Right move
+    // between words, and landing on a command executes it.
+    const counterEl = document.getElementById("word-counter");
+    let words = [];        // [{ from, to, cmd }] character offsets into the text
+    let wordIndex = 0;
+    let currentMark = null;
+
+    function computeWords() {
+      const text = editor.getValue();
+      const cmdRe = /\[(?:[^\[\]]|\[[^\[\]]*\])*\]/g;
+
+      const tokens = [];
+      let m;
+
+      // Each full bracketed command counts as one word.
+      while ((m = cmdRe.exec(text)) !== null) {
+        tokens.push({ from: m.index, to: m.index + m[0].length, cmd: true });
+      }
+
+      // Spoken words: tokenize with commands blanked out (keeping length) so
+      // offsets stay accurate and no command text leaks in as a word.
+      const plain = text.replace(cmdRe, (cmd) => " ".repeat(cmd.length));
+      const wordRe = /[A-Za-z0-9']+/g;
+      while ((m = wordRe.exec(plain)) !== null) {
+        tokens.push({ from: m.index, to: m.index + m[0].length, cmd: false });
+      }
+
+      // Merge into reading order.
+      tokens.sort((a, b) => a.from - b.from);
+      words = tokens;
+      if (wordIndex > words.length - 1) wordIndex = Math.max(0, words.length - 1);
+    }
+
+    function refreshMark(scroll) {
+      if (currentMark) { currentMark.clear(); currentMark = null; }
+
+      if (!words.length) {
+        counterEl.textContent = "no words";
+        return;
+      }
+
+      const w = words[wordIndex];
+      const from = editor.posFromIndex(w.from);
+      const to = editor.posFromIndex(w.to);
+      currentMark = editor.markText(from, to, { className: "cm-current-word" });
+      if (scroll) editor.scrollIntoView({ from, to }, 80);
+
+      counterEl.textContent = `word ${wordIndex + 1} / ${words.length}`;
+    }
+
+    function moveWord(delta) {
+      if (!words.length) return;
+      wordIndex = Math.max(0, Math.min(wordIndex + delta, words.length - 1));
+      refreshMark(true);
+      // Landing on a bracketed command executes it (like the original listener).
+      const w = words[wordIndex];
+      if (w && w.cmd) executeCommandToken(w);
+    }
+
+    // Start over: jump back to the first word and reload the interpreter iframes
+    // so their state is wiped clean. We don't execute on landing here.
+    function restart() {
+      wordIndex = 0;
+      refreshMark(true);
+      frames.forEach((f) => { f.contentWindow.location.reload(); });
+    }
+
+    // Left/Right always drive the current word (no modifier keys, so modified
+    // arrow combos still work for normal editing). Capture phase so CodeMirror
+    // doesn't consume them first.
+    document.addEventListener("keydown", (e) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.key === "ArrowLeft") { moveWord(-1); e.preventDefault(); e.stopPropagation(); }
+      else if (e.key === "ArrowRight") { moveWord(1); e.preventDefault(); e.stopPropagation(); }
+      else if (e.key === "ArrowUp") { restart(); e.preventDefault(); e.stopPropagation(); }
+    }, true);
+
+    // Keep the word list in sync with edits and hot reloads (never executes).
+    editor.on("changes", () => { computeWords(); refreshMark(false); });
+
+    // Apply new script contents without a full page refresh. Preserve the
+    // cursor position and scroll so an on-disk change doesn't yank the view.
+    function applyScript(data) {
+      document.getElementById("script-path").textContent = data.path;
+      document.title = data.path.split("/").pop() + " — Script Editor";
+
+      if (editor.getValue() === data.content) return; // no change, don't disturb
+
+      const cursor = editor.getCursor();
+      const scroll = editor.getScrollInfo();
+      editor.setValue(data.content);
+      editor.setCursor(cursor);
+      editor.scrollTo(scroll.left, scroll.top);
+    }
+
+    // Server-Sent Events: the server pushes the file contents on connect and
+    // again every time the file changes on disk (hot reload).
+    function connect() {
+      const source = new EventSource("/events");
+      source.onmessage = (event) => applyScript(JSON.parse(event.data));
+      source.onerror = () => {
+        // EventSource auto-reconnects; nothing to do but let it retry.
+      };
+    }
+
+    connect();
+    connectRelay();
+  </script>
+</body>
+</html>
