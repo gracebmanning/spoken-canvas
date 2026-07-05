@@ -3,16 +3,14 @@
 Script Editor Web App (listen2)
 Takes a .script file and opens a web page for running that script.
 
-Serves a code editor that displays the script, tracks the current word,
-executes bracketed commands, and embeds the interpreters as iframes. Also
-launches the WebSocket relay (serve.py) so a single command runs everything.
+Serves a code editor that displays the script, tracks the current word, and
+executes bracketed commands by posting them directly to the interpreter
+iframes it embeds (no separate relay process).
 """
 
 import argparse
 import json
 import mimetypes
-import socket
-import subprocess
 import sys
 import threading
 import time
@@ -26,9 +24,6 @@ EDITOR_HTML = EDITOR_DIR / "editor.html"
 # Interpreter pages (browser_2d.html, browser_3d.html, colors.js, ...) are
 # served so the editor can embed them as iframes.
 INTERPRETERS_DIR = (Path(__file__).parent.parent / "interpreters" / "browser").resolve()
-# The WebSocket relay that broadcasts commands to the interpreter iframes.
-SERVE_PY = Path(__file__).parent / "serve.py"
-RELAY_PORT = 8000
 DEFAULT_PORT = 8100
 
 
@@ -109,43 +104,17 @@ class EditorHandler(BaseHTTPRequestHandler):
         pass
 
 
-def _port_in_use(port, host="127.0.0.1"):
-    """Return True if something is already listening on host:port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.5)
-        return sock.connect_ex((host, port)) == 0
-
-
-def start_relay():
-    """
-    Launch the WebSocket relay (serve.py) as a subprocess so a single command
-    runs everything. If something is already listening on the relay port we
-    assume a relay is running and leave it alone.
-
-    Returns the Popen handle, or None if we didn't start one.
-    """
-    if _port_in_use(RELAY_PORT):
-        print(f"Relay already running on port {RELAY_PORT} (reusing it).")
-        return None
-
-    print(f"Starting relay (serve.py) on port {RELAY_PORT}...")
-    return subprocess.Popen([sys.executable, str(SERVE_PY)])
-
-
 def main():
     parser = argparse.ArgumentParser(description="Open a web editor for a .script file")
     parser.add_argument("script", help="Path to .script file")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port to serve on (default: {DEFAULT_PORT})")
     parser.add_argument("--no-browser", action="store_true", help="Don't auto-open the browser")
-    parser.add_argument("--no-relay", action="store_true", help="Don't start the WebSocket relay (serve.py)")
     args = parser.parse_args()
 
     script_path = Path(args.script).expanduser().resolve()
     if not script_path.is_file():
         print(f"Error: script file not found: {script_path}")
         sys.exit(1)
-
-    relay_proc = None if args.no_relay else start_relay()
 
     handler = partial(EditorHandler, script_path=script_path)
     server = ThreadingHTTPServer(("localhost", args.port), handler)
@@ -168,12 +137,6 @@ def main():
         print("\nShutting down.")
     finally:
         server.shutdown()
-        if relay_proc is not None:
-            relay_proc.terminate()
-            try:
-                relay_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                relay_proc.kill()
 
 
 if __name__ == "__main__":

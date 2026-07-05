@@ -41,85 +41,25 @@ function executeCommand(code, { afterExecute, onError } = {}) {
 }
 
 /**
- * Open a WebSocket to the relay, self-filter by target, and route messages to
- * callbacks. Reconnects automatically up to maxReconnectAttempts.
+ * Listen for messages from the top-level editor page (same-origin parent, via
+ * postMessage — no relay process involved):
+ * - {type: "execute", code}   a script command to eval (see executeCommand)
+ * - {type: "tick", ctx}       the per-frame signal {t, dt, audioLevel}; see frp.js's applyTick
  *
  * @param {object}   options
- * @param {string}   options.target                 this interpreter's target ("browser_2d", ...)
- * @param {string}   [options.url]                   relay URL
- * @param {function} [options.onExecute]             called with the code string for command:"execute"
- * @param {function} [options.onPosition]            called with the full message for command:"update_position"
- * @param {function} [options.onStatus]              called with human-readable status strings
- * @param {number}   [options.maxReconnectAttempts]
- * @param {number}   [options.reconnectDelayMs]
+ * @param {function} [options.onExecute]   called with the code string
+ * @param {function} [options.onTick]      called with the ctx object
  */
-function connectInterpreter({
-    target,
-    url = "ws://127.0.0.1:8000/ws",
-    onExecute,
-    onPosition,
-    onStatus = () => {},
-    maxReconnectAttempts = 5,
-    reconnectDelayMs = 2000,
-}) {
-    let ws;
-    let reconnectAttempts = 0;
-
-    function connect() {
-        try {
-            onStatus("Connecting to: " + url);
-            ws = new WebSocket(url);
-
-            ws.onopen = () => {
-                reconnectAttempts = 0;
-                onStatus("Connected! Waiting for commands...");
-                console.log("WebSocket connected as", target);
-            };
-
-            ws.onmessage = (event) => {
-                let data;
-                try {
-                    data = JSON.parse(event.data);
-                } catch (e) {
-                    onStatus("Parse error: " + e.message);
-                    console.error("Parse error:", e);
-                    return;
-                }
-
-                // Self-filter: ignore messages addressed to a different interpreter.
-                // A message with no target is accepted by everyone (original behavior).
-                if (data.target && data.target !== target) return;
-
-                if (data.command === "execute") {
-                    if (onExecute) onExecute(data.code);
-                } else if (data.command === "update_position") {
-                    if (onPosition) onPosition(data);
-                }
-            };
-
-            ws.onerror = (error) => {
-                onStatus("WebSocket error");
-                console.error("WebSocket error:", error);
-            };
-
-            ws.onclose = () => {
-                onStatus("Disconnected");
-                console.log("WebSocket closed");
-                if (reconnectAttempts < maxReconnectAttempts) {
-                    reconnectAttempts++;
-                    onStatus("Reconnecting... attempt " + reconnectAttempts);
-                    setTimeout(connect, reconnectDelayMs);
-                }
-            };
-        } catch (e) {
-            onStatus("Error creating WebSocket: " + e.message);
-        }
-    }
-
-    connect();
+function connectToEditor({ onExecute, onTick } = {}) {
+    window.addEventListener("message", (event) => {
+        const msg = event.data;
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type === "execute" && onExecute) onExecute(msg.code);
+        else if (msg.type === "tick" && onTick) onTick(msg.ctx);
+    });
 }
 
 // Expose on the global scope for the interpreter scripts.
 window.globalizeDeclarations = globalizeDeclarations;
 window.executeCommand = executeCommand;
-window.connectInterpreter = connectInterpreter;
+window.connectToEditor = connectToEditor;

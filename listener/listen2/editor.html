@@ -48,16 +48,6 @@
       font-family: monospace;
       white-space: nowrap;
     }
-    header .out-status {
-      font-size: 12px;
-      color: #ef5350;
-      font-family: monospace;
-      white-space: nowrap;
-    }
-    header .out-status.connected {
-      color: #66bb6a;
-    }
-
     /* Responsive split: side by side when wide, stacked when narrow. */
     .main {
       flex: 1;
@@ -115,7 +105,6 @@
     <h1>Script Editor</h1>
     <span class="path" id="script-path"></span>
     <span class="counter" id="word-counter"></span>
-    <span class="out-status" id="out-status">output ●</span>
   </header>
 
   <div class="main">
@@ -136,36 +125,20 @@
       mode: null,
     });
 
-    // ---- Command relay --------------------------------------------------
-    // Commands are sent to the WebSocket relay (listener/serve.py on :8000),
-    // which broadcasts them to the interpreter iframes — same path as the
-    // original listener.py.
-    const INTERPRETER_TARGETS = ["browser_2d", "browser_3d", "td"];
+    // ---- Command dispatch -------------------------------------------------
+    // Commands are posted directly to the interpreter iframes (same page,
+    // same origin) — no relay process involved.
+    const INTERPRETER_TARGETS = ["browser_2d", "browser_3d"];
     const DEFAULT_TARGET = "browser_2d";
-    const RELAY_URL = "ws://" + (location.hostname || "localhost") + ":8000/ws";
-    const outStatusEl = document.getElementById("out-status");
-    let relay = null;
-
-    function setOutStatus(connected) {
-      outStatusEl.classList.toggle("connected", connected);
-      outStatusEl.textContent = connected ? "output ● connected" : "output ● offline";
-    }
-
-    function connectRelay() {
-      try {
-        relay = new WebSocket(RELAY_URL);
-        relay.onopen = () => setOutStatus(true);
-        relay.onclose = () => { setOutStatus(false); setTimeout(connectRelay, 2000); };
-        relay.onerror = () => {};
-      } catch (e) {
-        setOutStatus(false);
-        setTimeout(connectRelay, 2000);
-      }
-    }
+    const TARGET_FRAMES = {
+      browser_2d: document.getElementById("frame-2d"),
+      browser_3d: document.getElementById("frame-3d"),
+    };
 
     function sendCommand(target, code) {
-      if (relay && relay.readyState === WebSocket.OPEN) {
-        relay.send(JSON.stringify({ target, command: "execute", code }));
+      const frame = TARGET_FRAMES[target];
+      if (frame && frame.contentWindow) {
+        frame.contentWindow.postMessage({ type: "execute", code }, "*");
       }
     }
 
@@ -210,6 +183,94 @@
     window.addEventListener("resize", fitStage);
     if (window.ResizeObserver) new ResizeObserver(fitStage).observe(stage);
     fitStage();
+
+    // ---- FRP clock + microphone (owned here, broadcast to the iframes) --
+    // The editor is the single source of the animation clock and the mic level.
+    // The mic is opened once at the top level so there's a single permission
+    // prompt and one analyser. Once per frame we post
+    // {type:"tick", ctx:{t, dt, audioLevel}} to every interpreter iframe; each
+    // world advances its own dynamics from that ctx and renders (see frp.js's
+    // applyTick and each world's onTick handler). Interpreters never touch
+    // getUserMedia or requestAnimationFrame themselves.
+    const RMS_GAIN = 5;             // voice RMS is small; lift it toward 0..1 (tune knob)
+    const AUDIO_SMOOTHING = 0.8;    // 0 = instant & jittery, ->1 = heavy lag (tune knob)
+
+    let audioLevel = 0;   // smoothed RMS loudness, 0..1
+    let analyser = null;  // set once the mic is granted
+    let timeData = null;
+    let startMs = null;   // rAF timestamp at t=0; reset by restart()
+    let lastMs = null;    // rAF timestamp of the previous tick
+
+    function initAudio() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error("mic: getUserMedia unavailable — needs a secure context (https or localhost).");
+        return;
+      }
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      const tryResume = (why) => {
+        if (audioCtx.state === "suspended") {
+          audioCtx.resume().then(() => console.log(`mic: context resumed (${why}) -> ${audioCtx.state}`));
+        }
+      };
+      // Browsers won't start audio without a user gesture; resume on the first one.
+      const resumeOnGesture = () => {
+        tryResume("user gesture");
+        window.removeEventListener("pointerdown", resumeOnGesture);
+        window.removeEventListener("keydown", resumeOnGesture);
+      };
+      window.addEventListener("pointerdown", resumeOnGesture);
+      window.addEventListener("keydown", resumeOnGesture);
+
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+        const source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+        timeData = new Uint8Array(analyser.fftSize);
+        tryResume("mic granted");
+        console.log(`mic: ready, context '${audioCtx.state}'. If that reads 'suspended', click the page once.`);
+      }).catch((err) => {
+        console.error("mic: microphone unavailable —", err.message);
+      });
+    }
+
+    // RMS -> gain -> exponential moving average. No-op until the mic is ready.
+    function updateAudioLevel() {
+      if (!analyser) return;
+      analyser.getByteTimeDomainData(timeData); // 0..255 per sample, 128 = silence
+      let sumSq = 0;
+      for (let i = 0; i < timeData.length; i++) {
+        const v = (timeData[i] - 128) / 128;    // -1..1
+        sumSq += v * v;
+      }
+      const rms = Math.sqrt(sumSq / timeData.length);
+      const target = Math.min(1, rms * RMS_GAIN);
+      audioLevel = audioLevel * AUDIO_SMOOTHING + target * (1 - AUDIO_SMOOTHING);
+    }
+
+    // The single master clock: computes t/dt, refreshes audioLevel, and posts
+    // one tick per frame to every interpreter iframe.
+    function tick(nowMs) {
+      requestAnimationFrame(tick);
+      if (startMs === null) startMs = nowMs;
+      if (lastMs === null) lastMs = nowMs;
+
+      updateAudioLevel();
+      const ctx = {
+        t: (nowMs - startMs) / 1000,
+        dt: (nowMs - lastMs) / 1000,
+        audioLevel,
+      };
+      lastMs = nowMs;
+
+      for (const f of frames) {
+        if (f.contentWindow) f.contentWindow.postMessage({ type: "tick", ctx }, "*");
+      }
+    }
+    requestAnimationFrame(tick);
+
+    initAudio();
 
     // ---- Word tracking --------------------------------------------------
     // "Words" are the spoken words of the plain text PLUS each bracketed
@@ -273,11 +334,14 @@
       if (w && w.cmd) executeCommandToken(w);
     }
 
-    // Start over: jump back to the first word and reload the interpreter iframes
-    // so their state is wiped clean. We don't execute on landing here.
+    // Start over: jump back to the first word, reset the clock so t starts at
+    // 0 again, and reload the interpreter iframes so their state is wiped
+    // clean. We don't execute on landing here.
     function restart() {
       wordIndex = 0;
       refreshMark(true);
+      startMs = null;
+      lastMs = null;
       frames.forEach((f) => { f.contentWindow.location.reload(); });
     }
 
@@ -320,7 +384,6 @@
     }
 
     connect();
-    connectRelay();
   </script>
 </body>
 </html>

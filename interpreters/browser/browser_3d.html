@@ -15,7 +15,9 @@
     </script>
     <!-- Shared color palette (defines COLOR_MAP and parseColor globally) -->
     <script src="colors.js"></script>
-    <!-- Shared interpreter plumbing (executeCommand + connectInterpreter) -->
+    <!-- Shared scene-graph animation engine (dynamicProps, tween, applyTick, ...) -->
+    <script src="frp.js"></script>
+    <!-- Shared interpreter plumbing (executeCommand + connectToEditor) -->
     <script src="interpreter_core.js"></script>
     <style>
         body {
@@ -53,16 +55,6 @@
         import * as THREE from 'three';
 
         const debugEl = document.getElementById('debug');
-        let wsConnected = false;
-
-        // Script state tracking
-        let scriptState = {
-            position: 0,
-            totalWords: 0,
-            plainText: "",
-            words: [],
-            shown: false
-        };
 
         function debug(msg) {
             console.log(`3D: ${msg}`);
@@ -109,184 +101,10 @@
             camera.updateProjectionMatrix();
         });
 
-        // ============================================
-        // AUDIO ANALYSIS
-        // ============================================
-        // Lazily opens the mic on the first audio_reactive() call, then runs an RMS meter on the live signal each frame.
-        // Exposes a smoothed 0..1 loudness as audiolevel for the scale dynamics.
-        let audioCtx = null;
-        let analyser = null;
-        let timeData = null;
-        let audioReady = false;
-        let audioLevel = 0; // smoothed RMS loudness, 0..1, refreshed per frame
-
-        const RMS_GAIN = 5;             // voice RMS is small; lift it toward 0..1 (tune knob)
-        const AUDIO_SMOOTHING = 0.8;    // 0 = instant & jittery, ->1 = heavy lag (tune knob)
-
-        // The scale a shape had when it became reactive, so the pulse multiplies
-        // onto its own size rather than replacing it. scale() clears the entry.
-        const audioBaseScale = new WeakMap();   // shape -> THREE.Vector3
-
-        function initAudio() {
-            if (audioCtx) return;       // already requested — don't prompt twice
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                console.error("audio_reactive: getUserMedia unavailable — needs a secure context (https or localhost). Opening via file:// may block the mic.");
-                return;
-            }
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-            const tryResume = (why) => {
-                if (audioCtx.state === 'suspended') {
-                    audioCtx.resume().then(() => console.log(`audio_reactive: context resumed (${why}) -> ${audioCtx.state}`))
-                }
-            }
-
-            const resumeOnGesture = () => {
-                tryResume('user gesture');
-                window.removeEventListener('pointerdown', resumeOnGesture);
-                window.removeEventListener('keydown', resumeOnGesture);
-            }
-
-            window.addEventListener('pointerdown', resumeOnGesture);
-            window.addEventListener('keydown', resumeOnGesture);
-
-            navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-                const source = audioCtx.createMediaStreamSource(stream);
-                analyser = audioCtx.createAnalyser();
-                analyser.fftSize = 1024;
-                source.connect(analyser);
-                timeData = new Uint8Array(analyser.fftSize);
-                audioReady = true;
-                tryResume('mic granted');
-                console.log(`audio_reactive: mic ready, context '${audioCtx.state}'. If that reads 'suspended', click the page once.`)
-            }).catch((err) => {
-                console.error("audio_reactive: microphone unavailable —", err.message);
-            });
-        }
-
-        function updateAudio() {
-            if (!audioReady) return;
-            analyser.getByteTimeDomainData(timeData);   // 0..255 per sample, 128 = silence
-            let sumSq = 0;
-            for (let i = 0; i < timeData.length; i++) {
-                const v = (timeData[i] - 128) / 128;    // -1..1
-                sumSq += v * v;
-            }
-            const rms = Math.sqrt(sumSq / timeData.length);
-            const target = Math.min(1, rms * RMS_GAIN);
-            // exponential moving average -> temporal smoothing (the lag/jitter knob)
-            audioLevel = audioLevel * AUDIO_SMOOTHING + target * (1 - AUDIO_SMOOTHING);
-            window.audioLevel = audioLevel; // for debug purposes
-        }
-
-        // ============================================
-        // ANIMATION ENGINE
-        // ============================================
-        // Accepts:
-        // 1. Numeric value (tween from current value to target over 'duration' seconds)
-        // 2. String expression (compiled to a function of t, seconds since page load; runs continuously)
-
-        let t = 0; // seconds since page load
-
-        // mesh => Map of "prop.subprop" path => function(t) => value
-        // Map<THREE.Object3D, Map<string, function>>
-        const dynamicProps = new Map();
-
-        function registerDynamic(mesh, path, fn) {
-            if (!dynamicProps.has(mesh)) dynamicProps.set(mesh, new Map());
-            dynamicProps.get(mesh).set(path, fn)
-        }
-
-        function unregisterDynamic(mesh, path) {
-            const props = dynamicProps.get(mesh)
-            if (!props) return;
-            props.delete(path)
-            if (props.size === 0) dynamicProps.delete(mesh);
-        }
-
-        // read/write a nested property like "position.x" on an object
-        function setPath(obj, path, value) {
-            const parts = path.split('.');
-            let target = obj;
-            for (let i = 0; i < parts.length - 1; i++) target = target[parts[i]];
-            target[parts[parts.length - 1]] = value;
-        }
-        function getPath(obj, path) {
-            return path.split('.').reduce((o, k) => o[k], obj);
-        }
-
-        // compile a new expression to a function of t.
-        function compileExpression(expr) {
-            return new Function('t', `return ${expr};`);
-        }
-
-        function easeOutCubic(x) {
-            return 1 - Math.pow(1 - x, 3);
-        }
-
-        // register a duration-based tween
-        // animate 'path' from its current value to 'targetValue' over 'duration' seconds, then self-unregister.
-        function registerTween(mesh, path, targetValue, duration) {
-            const fromValue = getPath(mesh, path);
-            const startT = t;
-            const endT = startT + duration;
-            registerDynamic(mesh, path, (now) => {
-                if (now >= endT) {
-                    unregisterDynamic(mesh, path);
-                    return targetValue;
-                }
-                const progress = (now - startT) / duration;
-                return fromValue + (targetValue - fromValue) * easeOutCubic(progress);
-            });
-        }
-
-        /**
-         * Dispatch x/y/z to the right slot in dynamicProps.
-         *
-         * @param {object}   shape          the Three.js mesh
-         * @param {string}   propName       "position" or "rotation"
-         * @param {*}        x,y,z          numeric, string expression, or undefined
-         * @param {number}   duration       seconds; applies to numeric args only
-         * @param {function} valueTransform converts user value to property unit
-         *                                  (identity for position, deg->rad for rotation)
-        */
-        function applyTransform(shape, propName, x, y, z, duration, valueTransform = (v) => v) {
-            for (const [axis, arg] of [['x', x], ['y', y], ['z', z]]) {
-                const path = `${propName}.${axis}`;
-
-                if (typeof arg === 'string') {
-                    // Continuous expression. Overwrites any existing dynamic on this path.
-                    const fn = compileExpression(arg);
-                    registerDynamic(shape, path, (now) => valueTransform(fn(now)));
-                } else if (typeof arg === 'number') {
-                    // Numeric: stop any current tween/expression on this path first,
-                    // otherwise it would keep writing to the property next frame.
-                    unregisterDynamic(shape, path);
-                    const targetValue = valueTransform(arg);
-                    if (duration > 0) {
-                        registerTween(shape, path, targetValue, duration);
-                    } else {
-                        setPath(shape, path, targetValue);
-                    }
-                }
-            }
-        }
-
-        // per-frame: advance t, eval every registered dynamic expression, write result.
-        // an error-throwing expression is logged once and unregistered.
-        function tickDynamicProps(nowMs) {
-            t = nowMs / 1000;
-            for (const [mesh, props] of dynamicProps) {
-                for (const [path, fn] of props) {
-                    try {
-                        setPath(mesh, path, fn(t));
-                    } catch (e) {
-                        console.error(`Expression error on ${path}, unregistering:`, e.message);
-                        unregisterDynamic(mesh, path);
-                    }
-                }
-            }
-        }
+        // The scene-graph animation engine (dynamicProps, registerDynamic, tween,
+        // applyTransform, buildContext/applyTick, ...) lives in frp.js and is shared
+        // with browser_2d.html. The editor owns the clock and the microphone and
+        // pushes ctx down via postMessage; see the "CONNECT TO EDITOR" section below.
 
         const vertexNoise = new Map();
         const NOISE_MAX_DRIFT = 0.4; // units of drift at intensity 1
@@ -310,17 +128,8 @@
             }
         }
 
-        // animation / render loop
-        function animate(nowMs) {
-            requestAnimationFrame(animate);
-            if (nowMs !== undefined) {
-                updateAudio(); // refresh audioLevel before dynamics read it
-                tickDynamicProps(nowMs);
-                updateVertexNoise(t); // drift shape vertices
-            }
-            renderer.render(scene, camera);
-        }
-        requestAnimationFrame(animate);
+        // Render once so the (empty) scene isn't a blank frame before the first tick.
+        renderer.render(scene, camera);
 
         // ============================================
         // INTERPRETER FUNCTIONS (called by eval)
@@ -494,16 +303,19 @@
         /**
          * Move a shape. Each axis arg can be:
          * 1) a number => snap (duration = 0) or tween (duration > 0)
-         * 2) a string => compiled to a per-frame expression, ex: "t * 0.5"
-         * 
+         * 2) a string => compiled to a per-frame expression of t, ex: "t * 0.5"
+         * 3) a function (ctx) => value => evaluated per-frame, ex: (ctx) => ctx.t * 0.5
+         *    (ctx carries t, audioLevel, ...; see buildContext)
+         *
          * Mixed args are allowed.
          * Ex: move(b, "t * 0.5", 0, 0, 2) updates X axis via expression while Y and Z tween to 0 over 2 seconds.
-         * 
-         * @param {THREE.Object3D} shape
-         * @param {number|string}  x         target X position
-         * @param {number|string}  y         target Y position
-         * @param {number|string}  z         target Z position
-         * @param {number}         duration  seconds; applies to numeric args only. 0 (default) = instant.
+         * Ex: move(b, (ctx) => Math.sin(ctx.t), 0, 0) drives X with a function.
+         *
+         * @param {THREE.Object3D}          shape
+         * @param {number|string|function}  x         target X position
+         * @param {number|string|function}  y         target Y position
+         * @param {number|string|function}  z         target Z position
+         * @param {number}                  duration  seconds; applies to numeric args only. 0 (default) = instant.
         */
         function move(shape, x = 0.0, y = 0.0, z = 0.0, duration = 0) {
             if (!shape) return;
@@ -514,15 +326,16 @@
          * Rotate a shape. Angles are in degrees, converted to radians internally for Three.js.
          * Conversion is applied to expression results, too, so "t * 60" means 60 deg/sec.
          * 
-         * @param {THREE.Object3D} shape
-         * @param {number|string}  rx        degrees around X (or expression string)
-         * @param {number|string}  ry        degrees around Y (or expression string)
-         * @param {number|string}  rz        degrees around Z (or expression string)
-         * @param {number}         duration  seconds; applies to numeric args only. 0 (default) = instant.
+         * @param {THREE.Object3D}          shape
+         * @param {number|string|function}  rx        degrees around X (or "t"-expression, or (ctx)=>deg)
+         * @param {number|string|function}  ry        degrees around Y (or "t"-expression, or (ctx)=>deg)
+         * @param {number|string|function}  rz        degrees around Z (or "t"-expression, or (ctx)=>deg)
+         * @param {number}                  duration  seconds; applies to numeric args only. 0 (default) = instant.
          * Examples:
          *   rotate(b1, 0, 90, 0)            snap to 90 deg around Y
          *   rotate(b1, 0, 90, 0, 1)         tween to 90 over 1 second
          *   rotate(b1, 0, "t * 60", 0)      spin at 60 deg/sec around Y, forever
+         *   rotate(b1, 0, (ctx) => ctx.t * 60, 0)   same spin via a function
         */
         function rotate(shape, rx = 0.0, ry = 0.0, rz = 0.0, duration = 0) {
             if (!shape) return;
@@ -540,12 +353,12 @@
          *   scale(b1, 2, 1, 1)      -> stretch X only, leave Y/Z at 1.0
          * 
          * Note: calling scale(b1) with no other args resets to (1, 1, 1).
-         * 
-         * @param {THREE.Object3D} shape
-         * @param {number|string}  sx        scale factor on X
-         * @param {number|string}  sy        scale factor on Y (defaults to sx)
-         * @param {number|string}  sz        scale factor on Z (defaults to sx)
-         * @param {number}         duration  seconds; applies to numeric args only. 0 (default) = instant.
+         *
+         * @param {THREE.Object3D}          shape
+         * @param {number|string|function}  sx        scale factor on X (number, "t"-expression, or (ctx)=>value)
+         * @param {number|string|function}  sy        scale factor on Y (defaults to sx)
+         * @param {number|string|function}  sz        scale factor on Z (defaults to sx)
+         * @param {number}                  duration  seconds; applies to numeric args only. 0 (default) = instant.
         */
         function scale(shape, sx = 1.0, sy, sz, duration = 0) {
             if (!shape) return;
@@ -571,7 +384,6 @@
         */
         function audio_reactive(shapes, low = 0.8, high = 1.0) {
             const list = Array.isArray(shapes) ? shapes : [shapes]; // normalize to array
-            initAudio();
 
             for (const shape of list) {
                 if (!shape) continue;
@@ -588,7 +400,7 @@
                 // One audio factor drives all three axes (uniform pulse).
                 for (const axis of ['x', 'y', 'z']) {
                     const b = base[axis];
-                    registerDynamic(shape, `scale.${axis}`, () => b * (low + (high - low) * audioLevel))
+                    registerDynamic(shape, `scale.${axis}`, (ctx) => b * (low + (high - low) * ctx.audioLevel))
                 }
             }
         }
@@ -665,9 +477,9 @@
         /**
          * Set a shape's opacity (0 = invisible, 1 = opaque).
          * 
-         * @param {THREE.Object3D}  shape
-         * @param {number|string}   value       0->1. Default 1.0.
-         * @param {number}          duration    seconds; numeric value only. 0 (default) = instant.
+         * @param {THREE.Object3D}      shape
+         * @param {number|string|function} value    0->1, a "t"-expression, or (ctx)=>value. Default 1.0.
+         * @param {number}              duration    seconds; numeric value only. 0 (default) = instant.
         */
         function opacity(shape, value = 1.0, duration = 0) {
             if (!shape || !shape.material) return;
@@ -681,11 +493,12 @@
                 }
             }
 
-            if (typeof value === 'string') {
-                // expression -> per-frame opacity, e.g. "0.5 + 0.5 * Math.sin(t)".
-                // it can dip below 1 at any time, so blending must stay on.
+            if (typeof value === 'string' || typeof value === 'function') {
+                // expression/function -> per-frame opacity, e.g. "0.5 + 0.5 * Math.sin(t)"
+                // or (ctx) => 0.5 + 0.5 * Math.sin(ctx.t). It can dip below 1 at any time,
+                // so blending must stay on.
                 for (const m of mats) setTransparent(m, true);
-                registerDynamic(shape, path, compileExpression(value));
+                registerDynamic(shape, path, toDynamicFn(value));
                 return;
             }
 
@@ -775,12 +588,10 @@
         window.clear = clear;
 
         // ============================================
-        // WEBSOCKET CONNECTION
+        // CONNECT TO EDITOR
         // ============================================
 
-        connectInterpreter({
-            target: 'browser_3d',
-            onStatus: (msg) => debug(msg),
+        connectToEditor({
             onExecute: (code) => {
                 debug('Executing: ' + code);
                 console.log('>>> EVAL:', code);
@@ -788,15 +599,10 @@
                     onError: (e) => debug('Error: ' + e.message),
                 });
             },
-            onPosition: (data) => {
-                scriptState.position = data.position;
-                if (data.totalWords) scriptState.totalWords = data.totalWords;
-                if (data.words) scriptState.words = data.words;
-                if (data.plainText) scriptState.plainText = data.plainText;
-
-                const progress = scriptState.totalWords > 0 ?
-                    (scriptState.position / scriptState.totalWords * 100).toFixed(0) : 0;
-                debug(`Position: ${scriptState.position}/${scriptState.totalWords} (${progress}%)`);
+            onTick: (ctx) => {
+                applyTick(ctx);            // advance every registered dynamic
+                updateVertexNoise(ctx.t);  // drift shape vertices
+                renderer.render(scene, camera);
             },
         });
 
