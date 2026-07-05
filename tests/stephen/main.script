@@ -1,6 +1,7 @@
 
+
 Let's play with text:
-  [let t = browser_2d.text("Time: " + TIME.t.toFixed(1), 400, 270, 100, "cyan")]
+  [let t = browser_2d.text("Time: " + TIME.t.toFixed(1), 400 + TIME.t*10, 270, 100, "cyan")]
 
   [browser_2d.text("Mic: " + MIC.audio_level.toFixed(1), 400, 370, 100, "red")]
 
@@ -10,11 +11,21 @@ Let's play with text:
 
   [browser_2d.text("Words completed: " + SCRIPT.words_completed(), 400, 570, 100, "lightgreen")]
 
+  [!let times_loud = 0; let was_loud = false]
+  [
+    const is_loud = MIC.audio_level > 0.1;
+    if (was_loud && !is_loud) times_loud++;
+    was_loud = is_loud;
+  ]
+
+  [browser_2d.text("Times loud: " + times_loud, 400, 670, 100, "magenta")]
+
 Let's begin with a circle.
-  [let c1 = browser_2d.circle(() => 50 * MIC.audio_level + TIME.t, TIME.t < 10 ? "lime" : "red")]
+  [let c1 = browser_2d.circle(50 * MIC.audio_level + times_loud * 10, TIME.t < 10 ? "lime" : "red")]
 
 A cube appears.
- [let block = browser_3d.cube(1.2, 1.2, 1.2, "gray")] [browser_3d.rotate(block,
+ [let block = browser_3d.cube(1.2, 1.2, 1.2, "gray")] 
+ [browser_3d.rotate(block,
                     TIME.t * MIC.audio_level,
                     TIME.t * 20,
                     0)]

@@ -214,206 +214,259 @@
       return entry || null;
     }
 
+    // ---- Continuous-bracket reconciliation (PHASE2 plan section D) --------
+    // Calling a creator function every tick (since plain `[code]` brackets are
+    // continuous by default — see PHASE2 plan section C) must not spawn a
+    // duplicate object every frame. `reconcileCreate` is the shared preamble
+    // every creator function below goes through.
+    //
+    // Ambient reconciliation context: set to {bracketId, callIndex} for the
+    // duration of one continuous bracket's registered-function invocation (see
+    // tick() below), and cleared right after. A stack (not just one variable)
+    // defensively supports nested invocation, though nothing in this codebase
+    // is expected to nest.
+    let reconcileCtx = null;
+    const reconcileCtxStack = [];
+    function pushReconcileCtx(bracketId) {
+      reconcileCtxStack.push(reconcileCtx);
+      reconcileCtx = { bracketId, callIndex: 0 };
+    }
+    function popReconcileCtx() {
+      reconcileCtx = reconcileCtxStack.pop();
+    }
+
+    // Per-bracket persistent registry: bracketId -> Map<callIndex, {creatorFn, world, id}>.
+    // Survives across ticks; only cleared when a bracket is re-registered
+    // (landed on again — see registerContinuous()) or on restart().
+    const reconcileRegistry = new Map();
+
+    /**
+     * Shared preamble for every creator function (circle/square/.../cube/.../
+     * cloud). `buildProps(existingProps)` resolves this call's arguments into
+     * a props object: called with `undefined` for a fresh creation (build a
+     * whole new object, including the generic Item-lifecycle defaults —
+     * position/rotation/scaling-or-scale/opacity/... — that move()/rotate()/
+     * scale()/fade() own from then on), or with the existing entry's `props`
+     * for a reconciled update (write only the fields this creator call itself
+     * governs — e.g. radius/size/color/content — directly onto that SAME
+     * object, so any dynamicSize/dynamicColor/dynamicProp `.register()` calls
+     * made inside it register against the correct, persistent item identity).
+     * Must return the props object (same reference it was given, if any).
+     *
+     * - Not inside a continuous bracket invocation (one-off `[!...]`, or
+     *   called from anywhere else): behaves exactly like Phase 1 — always
+     *   allocates a fresh id.
+     * - Inside one, keyed by (bracketId, callIndex): no existing entry ->
+     *   allocate fresh and remember it; existing entry with the same
+     *   `creatorFn` -> recompute props onto the existing entry, no new id;
+     *   existing entry with a *different* `creatorFn` (e.g. circle -> square)
+     *   -> remove the old one and allocate fresh, as if there had been none.
+     */
+    function reconcileCreate(world, kind, creatorFn, buildProps) {
+      if (!reconcileCtx) {
+        const id = nextId(world);
+        const props = buildProps(undefined);
+        stateStores[world].set(id, { kind, props });
+        return { __world: world, __id: id };
+      }
+
+      const { bracketId } = reconcileCtx;
+      const callIndex = reconcileCtx.callIndex++;
+      let slots = reconcileRegistry.get(bracketId);
+      if (!slots) { slots = new Map(); reconcileRegistry.set(bracketId, slots); }
+
+      const existing = slots.get(callIndex);
+      if (existing && existing.creatorFn === creatorFn) {
+        const entry = stateStores[existing.world].get(existing.id);
+        if (entry) {
+          buildProps(entry.props); // mutated in place; entry.props reference is unchanged
+          return { __world: existing.world, __id: existing.id };
+        }
+        // Entry vanished from under us (e.g. removed by script) — fall through
+        // and allocate fresh, same as a creatorFn mismatch below.
+      }
+      if (existing) {
+        removeFromWorld(existing.world, existing.id); // creatorFn differs (or stale) — tear down, same path as remove()
+      }
+      const id = nextId(world);
+      const props = buildProps(undefined);
+      stateStores[world].set(id, { kind, props });
+      slots.set(callIndex, { creatorFn, world, id });
+      return { __world: world, __id: id };
+    }
+
     // ---- 2D verb functions (Paper.js-shaped props) -----------------------
-    // Argument resolution (number | "t"-expression string | (ctx)=>value) is
+    // Argument resolution (number | "t"-expression string | ()=>value) is
     // unchanged from before — dynamicSize/dynamicColor/dynamicProp/applyDynamic
     // (frp.js) already normalize that generically; only what they're pointed
     // at changes (a plain props object's paths instead of a Paper.js item).
     function makeWorld2DApi(world) {
-      const store = () => stateStores[world];
-
       // Any size arg (radius/width/height) may be a number, a "t"-expression
-      // string, or a (ctx)=>value function; a dynamic one makes the shape grow/
-      // shrink over time. Ex: circle((c) => 50 + c.t, "red")
+      // string, or a ()=>value function; a dynamic one makes the shape grow/
+      // shrink over time. Ex: circle(() => 50 + TIME.t, "red")
       function circle(radius, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
-        const id = nextId(world);
-        const r = dynamicSize(radius, 'scaling', ['x', 'y']);
-        const col = dynamicColor(color);
-        const props = {
-          position: { x, y },
-          radius: r.base,
-          scaling: { x: 1, y: 1 },
-          rotation: 0,
-          opacity: 1,
-          fillColor: parseColor(col.base),
-        };
-        store().set(id, { kind: 'circle', props });
-        r.register(props);
-        col.register(props);
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'circle', circle, (props) => {
+          if (!props) props = { position: { x, y }, scaling: { x: 1, y: 1 }, rotation: 0, opacity: 1 };
+          const r = dynamicSize(radius, 'scaling', ['x', 'y']);
+          const col = dynamicColor(color);
+          props.radius = r.base;
+          props.fillColor = parseColor(col.base);
+          r.register(props);
+          col.register(props);
+          return props;
+        });
       }
 
       function square(size, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
-        const id = nextId(world);
-        const s = dynamicSize(size, 'scaling', ['x', 'y']);
-        const col = dynamicColor(color);
-        const props = {
-          position: { x, y },
-          size: { width: s.base, height: s.base },
-          scaling: { x: 1, y: 1 },
-          rotation: 0,
-          opacity: 1,
-          fillColor: parseColor(col.base),
-        };
-        store().set(id, { kind: 'square', props });
-        s.register(props);
-        col.register(props);
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'square', square, (props) => {
+          if (!props) props = { position: { x, y }, scaling: { x: 1, y: 1 }, rotation: 0, opacity: 1 };
+          const s = dynamicSize(size, 'scaling', ['x', 'y']);
+          const col = dynamicColor(color);
+          props.size = { width: s.base, height: s.base };
+          props.fillColor = parseColor(col.base);
+          s.register(props);
+          col.register(props);
+          return props;
+        });
       }
 
       function rect(width, height, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
-        const id = nextId(world);
-        const w = dynamicSize(width, 'scaling', ['x']);
-        const h = dynamicSize(height, 'scaling', ['y']);
-        const col = dynamicColor(color);
-        const props = {
-          position: { x, y },
-          size: { width: w.base, height: h.base },
-          scaling: { x: 1, y: 1 },
-          rotation: 0,
-          opacity: 1,
-          fillColor: parseColor(col.base),
-        };
-        store().set(id, { kind: 'rect', props });
-        w.register(props);
-        h.register(props);
-        col.register(props);
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'rect', rect, (props) => {
+          if (!props) props = { position: { x, y }, scaling: { x: 1, y: 1 }, rotation: 0, opacity: 1 };
+          const w = dynamicSize(width, 'scaling', ['x']);
+          const h = dynamicSize(height, 'scaling', ['y']);
+          const col = dynamicColor(color);
+          props.size = { width: w.base, height: h.base };
+          props.fillColor = parseColor(col.base);
+          w.register(props);
+          h.register(props);
+          col.register(props);
+          return props;
+        });
       }
 
       function ellipse(width, height, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
-        const id = nextId(world);
-        const w = dynamicSize(width, 'scaling', ['x']);
-        const h = dynamicSize(height, 'scaling', ['y']);
-        const col = dynamicColor(color);
-        const props = {
-          position: { x, y },
-          size: { width: w.base, height: h.base },
-          scaling: { x: 1, y: 1 },
-          rotation: 0,
-          opacity: 1,
-          fillColor: parseColor(col.base),
-        };
-        store().set(id, { kind: 'ellipse', props });
-        w.register(props);
-        h.register(props);
-        col.register(props);
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'ellipse', ellipse, (props) => {
+          if (!props) props = { position: { x, y }, scaling: { x: 1, y: 1 }, rotation: 0, opacity: 1 };
+          const w = dynamicSize(width, 'scaling', ['x']);
+          const h = dynamicSize(height, 'scaling', ['y']);
+          const col = dynamicColor(color);
+          props.size = { width: w.base, height: h.base };
+          props.fillColor = parseColor(col.base);
+          w.register(props);
+          h.register(props);
+          col.register(props);
+          return props;
+        });
       }
 
       // Create an arrow from point A to point B. No dynamic size/color support
       // in the old code either (only color could be dynamic) — preserved as-is.
       function arrow(fromX, fromY, toX, toY, color = 'black', thickness = 3) {
-        const id = nextId(world);
-        const col = dynamicColor(color, 'strokeColor');
+        return reconcileCreate(world, 'arrow', arrow, (props) => {
+          const col = dynamicColor(color, 'strokeColor');
 
-        const dx = toX - fromX;
-        const dy = toY - fromY;
-        const angle = Math.atan2(dy, dx);
-        const arrowLength = 15;
-        const arrowAngle = Math.PI / 6; // 30 degrees
+          const dx = toX - fromX;
+          const dy = toY - fromY;
+          const angle = Math.atan2(dy, dx);
+          const arrowLength = 15;
+          const arrowAngle = Math.PI / 6; // 30 degrees
 
-        const lines = [
-          { from: { x: fromX, y: fromY }, to: { x: toX, y: toY } },
-          {
-            from: { x: toX, y: toY },
-            to: {
-              x: toX - arrowLength * Math.cos(angle - arrowAngle),
-              y: toY - arrowLength * Math.sin(angle - arrowAngle),
+          const lines = [
+            { from: { x: fromX, y: fromY }, to: { x: toX, y: toY } },
+            {
+              from: { x: toX, y: toY },
+              to: {
+                x: toX - arrowLength * Math.cos(angle - arrowAngle),
+                y: toY - arrowLength * Math.sin(angle - arrowAngle),
+              },
             },
-          },
-          {
-            from: { x: toX, y: toY },
-            to: {
-              x: toX - arrowLength * Math.cos(angle + arrowAngle),
-              y: toY - arrowLength * Math.sin(angle + arrowAngle),
+            {
+              from: { x: toX, y: toY },
+              to: {
+                x: toX - arrowLength * Math.cos(angle + arrowAngle),
+                y: toY - arrowLength * Math.sin(angle + arrowAngle),
+              },
             },
-          },
-        ];
+          ];
 
-        const props = {
-          // Arrow has no natural single "position" the way a centered shape
-          // does; the from/to midpoint is a reasonable stand-in so move()/
-          // rotate()/scale() still work generically (a few-pixel recentering
-          // vs. the group's raw bounding box, which nothing depends on today).
-          position: { x: (fromX + toX) / 2, y: (fromY + toY) / 2 },
-          lines,
-          strokeWidth: thickness,
-          rotation: 0,
-          scaling: { x: 1, y: 1 },
-          opacity: 1,
-          strokeColor: parseColor(col.base),
-        };
-        store().set(id, { kind: 'arrow', props });
-        col.register(props);
-        return { __world: world, __id: id };
+          if (!props) {
+            // Arrow has no natural single "position" the way a centered shape
+            // does; the from/to midpoint is a reasonable stand-in so move()/
+            // rotate()/scale() still work generically (a few-pixel recentering
+            // vs. the group's raw bounding box, which nothing depends on today).
+            props = {
+              position: { x: (fromX + toX) / 2, y: (fromY + toY) / 2 },
+              rotation: 0,
+              scaling: { x: 1, y: 1 },
+              opacity: 1,
+            };
+          }
+          props.lines = lines;
+          props.strokeWidth = thickness;
+          props.strokeColor = parseColor(col.base);
+          col.register(props);
+          return props;
+        });
       }
 
       function line(fromX, fromY, toX, toY, color = 'white', thickness = 3) {
-        const id = nextId(world);
-        const col = dynamicColor(color, 'strokeColor');
-        const props = {
-          position: { x: (fromX + toX) / 2, y: (fromY + toY) / 2 },
-          from: { x: fromX, y: fromY },
-          to: { x: toX, y: toY },
-          strokeWidth: thickness,
-          rotation: 0,
-          scaling: { x: 1, y: 1 },
-          opacity: 1,
-          strokeColor: parseColor(col.base),
-        };
-        store().set(id, { kind: 'line', props });
-        col.register(props);
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'line', line, (props) => {
+          const col = dynamicColor(color, 'strokeColor');
+          if (!props) {
+            props = {
+              position: { x: (fromX + toX) / 2, y: (fromY + toY) / 2 },
+              rotation: 0,
+              scaling: { x: 1, y: 1 },
+              opacity: 1,
+            };
+          }
+          props.from = { x: fromX, y: fromY };
+          props.to = { x: toX, y: toY };
+          props.strokeWidth = thickness;
+          props.strokeColor = parseColor(col.base);
+          col.register(props);
+          return props;
+        });
       }
 
-      // content may be a literal (number/string) or a (ctx)=>value function for
-      // live text. Ex: text((c) => "Time: " + c.t.toFixed(1), 400, 270, 100, "cyan")
+      // content may be a literal (number/string) or a ()=>value function for
+      // live text. Ex: text(() => "Time: " + TIME.t.toFixed(1), 400, 270, 100, "cyan")
       function text(content, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, size = 24, color = 'white') {
-        const id = nextId(world);
-        const txt = dynamicProp(content, 'content', String);
-        const col = dynamicColor(color);
-        const props = {
-          position: { x, y },
-          content: String(txt.base),
-          fontSize: size,
-          rotation: 0,
-          scaling: { x: 1, y: 1 },
-          opacity: 1,
-          fillColor: parseColor(col.base),
-        };
-        store().set(id, { kind: 'text', props });
-        txt.register(props);
-        col.register(props);
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'text', text, (props) => {
+          if (!props) props = { position: { x, y }, rotation: 0, scaling: { x: 1, y: 1 }, opacity: 1 };
+          const txt = dynamicProp(content, 'content', String);
+          const col = dynamicColor(color);
+          props.content = String(txt.base);
+          props.fontSize = size;
+          props.fillColor = parseColor(col.base);
+          txt.register(props);
+          col.register(props);
+          return props;
+        });
       }
 
       // Create a box (rectangle with border, no fill) - useful for diagrams
       function box(width, height, color = 'white', x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, borderWidth = 2) {
-        const id = nextId(world);
-        const w = dynamicSize(width, 'scaling', ['x']);
-        const h = dynamicSize(height, 'scaling', ['y']);
-        const col = dynamicColor(color, 'strokeColor');
-        const props = {
-          position: { x, y },
-          size: { width: w.base, height: h.base },
-          scaling: { x: 1, y: 1 },
-          rotation: 0,
-          opacity: 1,
-          strokeColor: parseColor(col.base),
-          strokeWidth: borderWidth,
-          fillColor: null,
-        };
-        store().set(id, { kind: 'box', props });
-        w.register(props);
-        h.register(props);
-        col.register(props);
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'box', box, (props) => {
+          if (!props) props = { position: { x, y }, scaling: { x: 1, y: 1 }, rotation: 0, opacity: 1 };
+          const w = dynamicSize(width, 'scaling', ['x']);
+          const h = dynamicSize(height, 'scaling', ['y']);
+          const col = dynamicColor(color, 'strokeColor');
+          props.size = { width: w.base, height: h.base };
+          props.strokeColor = parseColor(col.base);
+          props.strokeWidth = borderWidth;
+          props.fillColor = null;
+          w.register(props);
+          h.register(props);
+          col.register(props);
+          return props;
+        });
       }
 
       /**
        * Move an item. Each of x/y can be a number (snap or tween), a "t"-expression
-       * string, or a (ctx)=>value function. Mixed args allowed.
+       * string, or a ()=>value function. Mixed args allowed.
        * Ex: move(c, "center.x + 200 * Math.sin(t)", center.y)
        */
       function move(handle, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, duration = 0) {
@@ -471,7 +524,7 @@
           }
           for (const axis of ['x', 'y']) {
             const b = base[axis];
-            registerDynamic(entry.props, `scaling.${axis}`, (ctx) => b * (low + (high - low) * ctx.audioLevel));
+            registerDynamic(entry.props, `scaling.${axis}`, () => b * (low + (high - low) * MIC.audio_level));
           }
         }
       }
@@ -494,15 +547,19 @@
     // per-iframe code (not added — out of scope here too): geometry and the
     // initial color are fixed numbers/strings resolved once, at creation.
     function makeWorld3DApi(world) {
-      const store = () => stateStores[world];
-
-      /** Create a box mesh and add it to the scene. */
-      function cube(sizex = 1.0, sizey, sizez, color = "white", x = 0, y = 0) {
-        if (sizey === undefined) sizey = sizex;
-        if (sizez === undefined) sizez = sizex;
-        const id = nextId(world);
-        const props = {
-          size: { x: sizex, y: sizey, z: sizez },
+      // Shared "generic Item lifecycle" defaults for a brand-new 3D entity —
+      // position/rotation/scale/opacity/transparent/noiseIntensity are owned
+      // from then on by move()/rotate()/scale()/opacity()/audio_reactive()/
+      // noise(), so a reconciled *update* call (see reconcileCreate above)
+      // must NOT reset them — only a fresh creation sets them. `color` is
+      // included here too (not in the "recomputed every reconcile" set below)
+      // because 3D has a dedicated color() verb, same reasoning as 2D's
+      // position: re-asserting the creator's flat construction color on every
+      // reconciled tick would fight a live color()-tween exactly the way
+      // resetting position would fight move() (see PHASE2 plan section D/E
+      // trace in the implementation notes).
+      function freshMeshDefaults(x, y, color) {
+        return {
           position: { x, y, z: 0 },
           rotation: { x: 0, y: 0, z: 0 },
           scale: { x: 1, y: 1, z: 1 },
@@ -511,63 +568,48 @@
           transparent: false,
           noiseIntensity: 0,
         };
-        store().set(id, { kind: 'cube', props });
-        return { __world: world, __id: id };
+      }
+
+      /** Create a box mesh and add it to the scene. */
+      function cube(sizex = 1.0, sizey, sizez, color = "white", x = 0, y = 0) {
+        if (sizey === undefined) sizey = sizex;
+        if (sizez === undefined) sizez = sizex;
+        return reconcileCreate(world, 'cube', cube, (props) => {
+          if (!props) props = freshMeshDefaults(x, y, color);
+          props.size = { x: sizex, y: sizey, z: sizez };
+          return props;
+        });
       }
 
       /** Create a sphere or ellipsoid. A string in any size slot is the color. */
       function sphere(radx = 0.5, rady, radz, color = "white", x = 0, y = 0) {
         if (rady === undefined) rady = radx;
         if (radz === undefined) radz = radx;
-        const id = nextId(world);
-        const props = {
-          radius: { x: radx, y: rady, z: radz },
-          position: { x, y, z: 0 },
-          rotation: { x: 0, y: 0, z: 0 },
-          scale: { x: 1, y: 1, z: 1 },
-          color: hexToRgb01(parseColor(color)),
-          opacity: 1,
-          transparent: false,
-          noiseIntensity: 0,
-        };
-        store().set(id, { kind: 'sphere', props });
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'sphere', sphere, (props) => {
+          if (!props) props = freshMeshDefaults(x, y, color);
+          props.radius = { x: radx, y: rady, z: radz };
+          return props;
+        });
       }
 
       /** Create a torus (donut shape). String shorthand: torus(0.6, "orange"). */
       function torus(radx = 0.5, rady = 0.25, color = "white", x = 0, y = 0) {
-        const id = nextId(world);
-        const props = {
-          radius: { outer: radx, tube: rady },
-          position: { x, y, z: 0 },
-          rotation: { x: 0, y: 0, z: 0 },
-          scale: { x: 1, y: 1, z: 1 },
-          color: hexToRgb01(parseColor(color)),
-          opacity: 1,
-          transparent: false,
-          noiseIntensity: 0,
-        };
-        store().set(id, { kind: 'torus', props });
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'torus', torus, (props) => {
+          if (!props) props = freshMeshDefaults(x, y, color);
+          props.radius = { outer: radx, tube: rady };
+          return props;
+        });
       }
 
       /** Create a tube: cylinder, cone, or truncated cone (frustum). */
       function tube(rad1 = 0.5, rad2, height = 0.5, color = "white", x = 0, y = 0) {
         if (rad2 === undefined) rad2 = rad1; // cylinder by default
-        const id = nextId(world);
-        const props = {
-          radius: { top: rad1, bottom: rad2 },
-          height,
-          position: { x, y, z: 0 },
-          rotation: { x: 0, y: 0, z: 0 },
-          scale: { x: 1, y: 1, z: 1 },
-          color: hexToRgb01(parseColor(color)),
-          opacity: 1,
-          transparent: false,
-          noiseIntensity: 0,
-        };
-        store().set(id, { kind: 'tube', props });
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'tube', tube, (props) => {
+          if (!props) props = freshMeshDefaults(x, y, color);
+          props.radius = { top: rad1, bottom: rad2 };
+          props.height = height;
+          return props;
+        });
       }
 
       /**
@@ -577,24 +619,16 @@
        * browser_3d.html's constructNative('cloud', ...).
        */
       function cloud(quantity = 1.0, spread = 1.0, color = "white", shape = "circle", x = 0, y = 0) {
-        const id = nextId(world);
-        const props = {
-          quantity,
-          spread,
-          pointShape: shape,
-          position: { x, y, z: 0 },
-          rotation: { x: 0, y: 0, z: 0 },
-          scale: { x: 1, y: 1, z: 1 },
-          color: hexToRgb01(parseColor(color)),
-          opacity: 1,
-          transparent: false,
-          noiseIntensity: 0,
-        };
-        store().set(id, { kind: 'cloud', props });
-        return { __world: world, __id: id };
+        return reconcileCreate(world, 'cloud', cloud, (props) => {
+          if (!props) props = freshMeshDefaults(x, y, color);
+          props.quantity = quantity;
+          props.spread = spread;
+          props.pointShape = shape;
+          return props;
+        });
       }
 
-      /** Move a shape. Each axis arg: number (snap/tween), "t"-expression, or (ctx)=>value. */
+      /** Move a shape. Each axis arg: number (snap/tween), "t"-expression, or ()=>value. */
       function move(handle, x = 0.0, y = 0.0, z = 0.0, duration = 0) {
         const entry = resolveHandle(world, handle);
         if (!entry) return;
@@ -636,7 +670,7 @@
           }
           for (const axis of ['x', 'y', 'z']) {
             const b = base[axis];
-            registerDynamic(entry.props, `scale.${axis}`, (ctx) => b * (low + (high - low) * ctx.audioLevel));
+            registerDynamic(entry.props, `scale.${axis}`, () => b * (low + (high - low) * MIC.audio_level));
           }
         }
       }
@@ -707,116 +741,151 @@
       return { cube, sphere, torus, tube, cloud, move, rotate, scale, audio_reactive, noise, color, opacity, remove, clear };
     }
 
-    // Verb functions live on a prototype object per world, so `with`'s
-    // property lookup finds them (HasBinding walks the prototype chain) without
-    // them ever being own properties that a restart's "fresh scope" would wipe.
+    // Verb-function namespaces, unchanged from Phase 1 — built once, reused
+    // across restarts (only scriptScope, below, gets rebuilt).
     const worldApis = {
       browser_2d: makeWorld2DApi('browser_2d'),
       browser_3d: makeWorld3DApi('browser_3d'),
     };
-
-    function freshWorldScope(world) {
-      return Object.create(worldApis[world]);
-    }
-
-    // Per-world namespace objects. `[browser_2d: let x = ...]` and
-    // `[browser_3d: let x = ...]` evaluate against separate objects here, so a
-    // bare `x` in one can't collide with a bare `x` in the other — see
-    // evalInWorld()/globalizeDeclarationsForWith() below. This also happens to
-    // make `worlds.browser_2d.someHandle` a plain property read, which is the
-    // shape Phase 3's cross-world dot-syntax needs later (not built now).
-    const worlds = {};
 
     function resetWorldState() {
       for (const world of WORLD_NAMES) {
         stateStores[world] = new Map();
         removedSinceTick[world] = [];
         idCounters[world] = 1;
-        worlds[world] = freshWorldScope(world);
       }
     }
     resetWorldState();
 
+    // Continuous-bracket registry (PHASE2 plan section D): bracketId -> the
+    // zero-argument function registered for a plain `[code]` bracket, invoked
+    // every tick (see tick() below) until restart() or until the same
+    // bracket is re-triggered (which just replaces the registration).
+    const continuousBrackets = new Map();
+
+    // "Words completed" — spoken words only, excluding bracket/command tokens
+    // — as a closure over the word-tracking state declared further below
+    // (words/wordIndex); see PHASE2 plan section B for why this is a method,
+    // not a plain property the way TIME/MIC are.
+    const SCRIPT = {
+      words_completed: () => words.slice(0, wordIndex).filter((w) => !w.cmd).length,
+    };
+
+    // One shared script-level scope (PHASE2 plan section A) — replaces
+    // Phase 1's one-`with`-scope-per-world model. browser_2d/browser_3d are
+    // reached only via this explicit prefix (`browser_2d.circle(...)` /
+    // `browser_3d.move(...)`); no verb function is ever bare-reachable — this
+    // is required, not just tidy, since move/rotate/scale/remove/clear/
+    // audio_reactive exist in both APIs with different signatures and a flat
+    // scope can't hold two same-named functions. TIME/MIC are frp.js's
+    // persistent, ambient signal objects (mutated in place by tick(), never
+    // rebuilt) — reached the same way. `let`-bound user variables become own
+    // properties of this same object (see globalizeDeclarationsForWith
+    // below); restart() replaces the whole object with a fresh one, wiping
+    // user bindings without needing to touch worldApis/TIME/MIC/SCRIPT.
+    function buildScriptScope() {
+      return {
+        browser_2d: worldApis.browser_2d,
+        browser_3d: worldApis.browser_3d,
+        TIME: window.TIME,
+        MIC: window.MIC,
+        SCRIPT,
+      };
+    }
+    let scriptScope = buildScriptScope();
+
     /**
      * Promote top-of-statement `let`/`const`/`var` declarations to plain
      * assignment (NOT `window.NAME =` — that's interpreter_core.js's old,
-     * global-scope-only version, wrong for this per-world scheme) so `with`
-     * binds them onto `worldObj`.
+     * global-scope-only version, wrong for this scheme) so `with` binds them
+     * onto `scope`.
      *
      * `with`'s identifier resolution only intercepts a name if it's already
-     * a property of `worldObj` (its HasBinding check is effectively `name in
-     * worldObj`, including the prototype chain) — so a *first* assignment to a
+     * a property of `scope` (its HasBinding check is effectively `name in
+     * scope`, including the prototype chain) — so a *first* assignment to a
      * name `with` doesn't yet know about would fall through and leak onto the
      * global object instead, in non-strict mode. Pre-declaring every name this
      * command will assign (as `undefined`, if not already present) closes that
      * hole before eval'ing.
      */
-    function globalizeDeclarationsForWith(code, worldObj) {
+    function globalizeDeclarationsForWith(code, scope) {
       for (const m of code.matchAll(/(^|\n|;)(\s*)(?:let|const|var)\s+(\w+)\s*=/g)) {
         const name = m[3];
-        if (!(name in worldObj)) worldObj[name] = undefined;
+        if (!(name in scope)) scope[name] = undefined;
       }
       return code.replace(/(^|\n|;)(\s*)(?:let|const|var)\s+(\w+)\s*=/g, "$1$2$3 =");
     }
 
-    // Evaluate `code` against `worlds[target]`'s namespace. Must be a DIRECT
-    // eval call (`eval(...)`, not the indirect `(0, eval)(...)` form
+    // Evaluate `code` once against `scriptScope`, discarding the result — the
+    // `[!code]` one-off path (PHASE2 plan section C: exactly Phase 1's
+    // one-shot semantics, no reconciliation, no registration). Must be a
+    // DIRECT eval call (`eval(...)`, not the indirect `(0, eval)(...)` form
     // interpreter_core.js's old executeCommand used) — indirect eval always
     // runs in the global scope and would never see the `with` binding below;
     // only a direct eval call sees the lexical scope (including `with`) it's
     // written in. This requires this whole page's script to stay non-strict
     // (no "use strict", not a module) since `with` is disallowed in strict mode.
-    function evalInWorld(target, code) {
-      const worldObj = worlds[target];
-      const rewritten = globalizeDeclarationsForWith(code, worldObj);
+    function evalOneShot(code) {
+      const rewritten = globalizeDeclarationsForWith(code, scriptScope);
       try {
-        with (worldObj) {
+        with (scriptScope) {
           eval(rewritten);
         }
       } catch (e) {
-        console.error(`[${target}] execution error:`, e);
+        console.error("execution error:", e);
       }
     }
 
+    // Compile `code` into a zero-argument function — evaluated ONCE against
+    // scriptScope to produce the function value — then register it under
+    // `bracketId` to be invoked every tick from now on (see tick() below):
+    // the plain `[code]` continuous path (PHASE2 plan section C). Landing on
+    // the SAME bracket again just replaces the registration; per section D
+    // that also resets this bracket's reconciliation call-site history, so
+    // its next invocation treats every creator call as fresh (orphaning
+    // whatever it previously created — accepted, not solved here).
+    function registerContinuous(bracketId, code) {
+      const rewritten = globalizeDeclarationsForWith(code, scriptScope);
+      let fn;
+      try {
+        with (scriptScope) {
+          fn = eval(`(() => {\n${rewritten}\n})`);
+        }
+      } catch (e) {
+        console.error("execution error (compiling continuous bracket):", e);
+        return;
+      }
+      reconcileRegistry.delete(bracketId);
+      continuousBrackets.set(bracketId, fn);
+    }
+
     // ---- Command dispatch -------------------------------------------------
-    // Bracket routing/timing is unchanged from before: one-shot execution when
-    // the listener lands on the word, single target per bracket, `[world: code]`
-    // colon syntax (default target browser_2d). The only thing that changed is
-    // *where* code evaluates — here, against that world's namespace — instead
-    // of being posted into that world's iframe.
-    const INTERPRETER_TARGETS = ["browser_2d", "browser_3d"];
-    const DEFAULT_TARGET = "browser_2d";
+    // A bracket's content is just `code` now — no `[world: code]` colon-prefix
+    // routing (Phase 1's per-bracket single-target model is gone; world
+    // targeting is fully explicit in the code itself, e.g.
+    // `browser_2d.circle(...)`, per PHASE2 plan section A). The only thing
+    // parsed here is a leading `!`, choosing between the two bracket forms
+    // from section C.
     const TARGET_FRAMES = {
       browser_2d: document.getElementById("frame-2d"),
       browser_3d: document.getElementById("frame-3d"),
     };
 
-    function sendCommand(target, code) {
-      evalInWorld(target, code);
-    }
-
-    // Route "browser_2d: circle(...)" -> { target, code }; an unrecognized or
-    // missing prefix falls back to the default target (mirrors listener.py).
-    function splitCommandTarget(content) {
-      const i = content.indexOf(":");
-      if (i >= 0) {
-        const prefix = content.slice(0, i).trim();
-        if (INTERPRETER_TARGETS.includes(prefix)) {
-          return { target: prefix, code: content.slice(i + 1).trim() };
-        }
-      }
-      return { target: DEFAULT_TARGET, code: content };
-    }
-
     function executeCommandToken(token) {
       const raw = editor.getValue().slice(token.from, token.to); // "[ ... ]"
       const content = raw.slice(1, -1).trim();
       if (content.toUpperCase() === "RESET()") {
-        INTERPRETER_TARGETS.forEach((t) => sendCommand(t, "clear()"));
+        // Sugar for "clear both worlds", run through the same one-off path —
+        // not a second, separate fan-out mechanism (PHASE2 plan section C).
+        evalOneShot("browser_2d.clear(); browser_3d.clear();");
         return;
       }
-      const { target, code } = splitCommandTarget(content);
-      sendCommand(target, code);
+      if (content.startsWith("!")) {
+        evalOneShot(content.slice(1).trim());
+      } else {
+        const bracketId = `${token.from}:${token.to}`; // stable source-position key
+        registerContinuous(bracketId, content);
+      }
     }
 
     // ---- Output iframe scaling ------------------------------------------
@@ -839,8 +908,8 @@
 
     // ---- FRP clock + microphone (owned here, drives the FRP engine) -----
     // The editor is the single source of the animation clock and the mic level,
-    // AND (since Phase 1) the only place frp.js's applyTick/tickDynamicProps
-    // run at all. The mic is opened once at the top level so there's a single
+    // AND the only place frp.js's tickDynamicProps runs at all. The mic is
+    // opened once at the top level so there's a single
     // permission prompt and one analyser. Once per frame (see tick() below) we
     // advance every registered dynamic ourselves, then post each world's
     // resolved {id, kind, props} state down as {type:"applyOps", ...}.
@@ -904,26 +973,36 @@
       audioLevel = audioLevel * AUDIO_SMOOTHING + target * (1 - AUDIO_SMOOTHING);
     }
 
-    // The single master clock: computes t/dt, refreshes audioLevel, advances
-    // every registered dynamic (frp.js's tickDynamicProps, via applyTick), and
-    // posts each world's full current {id, kind, props} state down as
-    // {type:"applyOps", t, ops, removed} — this fully replaces the old raw
-    // {type:"tick", ctx} message now that `t` rides along and neither world
-    // runs applyTick/its own clock anymore.
+    // The single master clock: computes t/dt, refreshes audioLevel, mutates
+    // TIME/MIC IN PLACE (no ctx object built or passed anywhere — PHASE2 plan
+    // section B), invokes every registered continuous bracket (inside the
+    // ambient reconciliation context from section D), advances every
+    // registered dynamic (frp.js's tickDynamicProps), and posts each world's
+    // full current {id, kind, props} state down as
+    // {type:"applyOps", t, ops, removed}.
     function tick(nowMs) {
       requestAnimationFrame(tick);
       if (startMs === null) startMs = nowMs;
       if (lastMs === null) lastMs = nowMs;
 
       updateAudioLevel();
-      const ctx = {
-        t: (nowMs - startMs) / 1000,
-        dt: (nowMs - lastMs) / 1000,
-        audioLevel,
-      };
+      TIME.t = (nowMs - startMs) / 1000;
+      TIME.dt = (nowMs - lastMs) / 1000;
+      MIC.audio_level = audioLevel;
       lastMs = nowMs;
 
-      applyTick(ctx); // advance every registered dynamic across both worlds' state stores
+      for (const [bracketId, fn] of continuousBrackets) {
+        pushReconcileCtx(bracketId);
+        try {
+          fn();
+        } catch (e) {
+          console.error(`continuous bracket execution error:`, e);
+        } finally {
+          popReconcileCtx();
+        }
+      }
+
+      tickDynamicProps(); // advance every registered dynamic across both worlds' state stores
 
       for (const world of WORLD_NAMES) {
         const ops = [];
@@ -935,7 +1014,7 @@
 
         const frame = TARGET_FRAMES[world];
         if (frame && frame.contentWindow) {
-          frame.contentWindow.postMessage({ type: "applyOps", t: ctx.t, ops, removed }, "*");
+          frame.contentWindow.postMessage({ type: "applyOps", t: TIME.t, ops, removed }, "*");
         }
       }
     }
@@ -1016,6 +1095,9 @@
       startMs = null;
       lastMs = null;
       resetWorldState();
+      continuousBrackets.clear();   // no lingering per-tick invocations after a restart
+      reconcileRegistry.clear();
+      scriptScope = buildScriptScope(); // fresh scope: wipes user `let`-bindings, keeps worldApis/TIME/MIC/SCRIPT wiring
       frames.forEach((f) => { f.contentWindow.location.reload(); });
     }
 
