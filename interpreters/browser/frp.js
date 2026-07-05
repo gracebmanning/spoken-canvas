@@ -217,6 +217,22 @@ function isTakenOver(item, path) {
     return !!set && set.has(path);
 }
 
+// Support reactive x/y args on 2D creator functions (circle/square/rect/
+// ellipse/box/text), the same way dynamicSize's plain-number branch handles
+// radius/width/height: a reconciled creator call is simply re-invoked every
+// tick with a freshly-evaluated bare expression (see FRP_PHASE2_PLAN.md's
+// "bare expression" position note), so re-writing position unconditionally on
+// every call is enough to make `text(..., 400 + TIME.t*10, ...)` track TIME.t
+// — no wrapper function needed.
+// GUARDED the same way scaling is guarded against dynamicSize: once move()
+// takes over an axis via markTakenOver, the creator backs off permanently so
+// it doesn't fight move()'s explicit repositioning on the very next
+// reconciled tick.
+function applyCreatorPosition(item, x, y) {
+    if (!isTakenOver(item, 'position.x')) item.position.x = x;
+    if (!isTakenOver(item, 'position.y')) item.position.y = y;
+}
+
 // The "original size" baseline per (item, path) — the value this axis was
 // FIRST driven at, used as the denominator for every later scaling-ratio
 // computation. Deliberately NOT the same as whatever a creator stores in its
@@ -315,4 +331,5 @@ window.dynamicProp = dynamicProp;
 window.dynamicColor = dynamicColor;
 window.dynamicSize = dynamicSize;
 window.markTakenOver = markTakenOver;
+window.applyCreatorPosition = applyCreatorPosition;
 window.audioBaseScale = audioBaseScale;

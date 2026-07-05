@@ -307,6 +307,7 @@
       function circle(radius, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
         return reconcileCreate(world, 'circle', circle, (props) => {
           if (!props) props = { position: { x, y }, scaling: { x: 1, y: 1 }, rotation: 0, opacity: 1 };
+          applyCreatorPosition(props, x, y);
           const r = dynamicSize(radius, 'scaling', ['x', 'y']);
           const col = dynamicColor(color);
           props.radius = r.base;
@@ -320,6 +321,7 @@
       function square(size, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
         return reconcileCreate(world, 'square', square, (props) => {
           if (!props) props = { position: { x, y }, scaling: { x: 1, y: 1 }, rotation: 0, opacity: 1 };
+          applyCreatorPosition(props, x, y);
           const s = dynamicSize(size, 'scaling', ['x', 'y']);
           const col = dynamicColor(color);
           props.size = { width: s.base, height: s.base };
@@ -333,6 +335,7 @@
       function rect(width, height, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
         return reconcileCreate(world, 'rect', rect, (props) => {
           if (!props) props = { position: { x, y }, scaling: { x: 1, y: 1 }, rotation: 0, opacity: 1 };
+          applyCreatorPosition(props, x, y);
           const w = dynamicSize(width, 'scaling', ['x']);
           const h = dynamicSize(height, 'scaling', ['y']);
           const col = dynamicColor(color);
@@ -348,6 +351,7 @@
       function ellipse(width, height, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
         return reconcileCreate(world, 'ellipse', ellipse, (props) => {
           if (!props) props = { position: { x, y }, scaling: { x: 1, y: 1 }, rotation: 0, opacity: 1 };
+          applyCreatorPosition(props, x, y);
           const w = dynamicSize(width, 'scaling', ['x']);
           const h = dynamicSize(height, 'scaling', ['y']);
           const col = dynamicColor(color);
@@ -431,14 +435,17 @@
       }
 
       // content may be a literal (number/string) or a ()=>value function for
-      // live text. Ex: text(() => "Time: " + TIME.t.toFixed(1), 400, 270, 100, "cyan")
-      function text(content, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, size = 24, color = 'white') {
+      // live text. align is "left", "center", or "right", relative to (x, y).
+      // Ex: text(() => "Time: " + TIME.t.toFixed(1), 400, 270, 100, "cyan", "left")
+      function text(content, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, size = 24, color = 'white', align = 'center') {
         return reconcileCreate(world, 'text', text, (props) => {
           if (!props) props = { position: { x, y }, rotation: 0, scaling: { x: 1, y: 1 }, opacity: 1 };
+          applyCreatorPosition(props, x, y);
           const txt = dynamicProp(content, 'content', String);
           const col = dynamicColor(color);
           props.content = String(txt.base);
           props.fontSize = size;
+          props.align = align;
           props.fillColor = parseColor(col.base);
           txt.register(props);
           col.register(props);
@@ -450,6 +457,7 @@
       function box(width, height, color = 'white', x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, borderWidth = 2) {
         return reconcileCreate(world, 'box', box, (props) => {
           if (!props) props = { position: { x, y }, scaling: { x: 1, y: 1 }, rotation: 0, opacity: 1 };
+          applyCreatorPosition(props, x, y);
           const w = dynamicSize(width, 'scaling', ['x']);
           const h = dynamicSize(height, 'scaling', ['y']);
           const col = dynamicColor(color, 'strokeColor');
@@ -472,6 +480,12 @@
       function move(handle, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, duration = 0) {
         const entry = resolveHandle(world, handle);
         if (!entry) return;
+        // Take over from any creator-driven position (applyCreatorPosition) —
+        // without this, a continuously-reconciled circle/square/.../text
+        // creation call would silently reassert its own x/y the very next
+        // tick, undoing this call (see frp.js's applyCreatorPosition/isTakenOver).
+        markTakenOver(entry.props, 'position.x');
+        markTakenOver(entry.props, 'position.y');
         applyDynamic(entry.props, 'position.x', x, duration);
         applyDynamic(entry.props, 'position.y', y, duration);
       }

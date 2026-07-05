@@ -1,15 +1,15 @@
 
 
 Let's play with text:
-  [let t = browser_2d.text("Time: " + TIME.t.toFixed(1), 400 + TIME.t*10, 270, 100, "cyan")]
+  [let t = browser_2d.text("Time: " + TIME.t.toFixed(1), 400 + TIME.t*10, 270, 100, "cyan", "left")]
 
-  [browser_2d.text("Mic: " + MIC.audio_level.toFixed(1), 400, 370, 100, "red")]
+  [browser_2d.text("Mic: " + MIC.audio_level.toFixed(1), 400, 370, 100, "red", "left")]
 
   [let x = () => (10 * MIC.audio_level)]
 
-  [browser_2d.text("Mic*10: " + x().toFixed(1), 400, 470, 100, "yellow")]
+  [browser_2d.text("Mic*10: " + x().toFixed(1), 400, 470, 100, "yellow", "left")]
 
-  [browser_2d.text("Words completed: " + SCRIPT.words_completed(), 400, 570, 100, "lightgreen")]
+  [browser_2d.text("Words completed: " + SCRIPT.words_completed(), 400, 570, 100, "lightgreen", "left")]
 
   [!let times_loud = 0; let was_loud = false]
   [
@@ -18,7 +18,7 @@ Let's play with text:
     was_loud = is_loud;
   ]
 
-  [browser_2d.text("Times loud: " + times_loud, 400, 670, 100, "magenta")]
+  [browser_2d.text("Times loud: " + times_loud, 400, 670, 100, "magenta", "left")]
 
 Let's begin with a circle.
   [let c1 = browser_2d.circle(50 * MIC.audio_level + times_loud * 10, TIME.t < 10 ? "lime" : "red")]

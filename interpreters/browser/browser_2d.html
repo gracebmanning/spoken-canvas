@@ -138,9 +138,18 @@
         // settable fields first, then the generic Item properties every kind
         // shares (position/rotation/scaling/opacity/fillColor/strokeColor).
         function applyProps(kind, item, props) {
+            // Paper.js's `position` setter always centers the item's bounding
+            // box on the given point, which silently overrides `justification`
+            // for horizontal alignment. So instead of relying on justification,
+            // we compute a compensating x-offset here and let the generic
+            // `position` assignment below do the actual placement.
+            let textAlignOffsetX = 0;
             if (kind === 'text') {
                 item.content = String(props.content);
                 item.fontSize = props.fontSize;
+                const align = props.align || 'center';
+                if (align === 'left') textAlignOffsetX = item.bounds.width / 2;
+                else if (align === 'right') textAlignOffsetX = -item.bounds.width / 2;
             }
             if (kind === 'line' || kind === 'arrow' || kind === 'box') {
                 item.strokeWidth = props.strokeWidth;
@@ -164,7 +173,7 @@
                 });
             }
 
-            if (props.position) item.position = new Point(props.position.x, props.position.y);
+            if (props.position) item.position = new Point(props.position.x + textAlignOffsetX, props.position.y);
             if (props.scaling) item.scaling = new Point(props.scaling.x, props.scaling.y);
             if (typeof props.rotation === 'number') item.rotation = props.rotation;
             if (typeof props.opacity === 'number') item.opacity = props.opacity;

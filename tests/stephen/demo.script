@@ -1,0 +1,19 @@
+
+In the beginning...
+
+  [browser_2d.text("Time: " + TIME.t.toFixed(1), 10, 50, 24, "cyan", "left")]
+
+  [browser_2d.text("Mic: " + MIC.audio_level.toFixed(1), 10, 100, 24, "red", "left")]
+
+  [!let times_loud = 0; let was_loud = false]
+  [
+    const is_loud = MIC.audio_level > 0.1;
+    if (was_loud && !is_loud) times_loud++;
+    was_loud = is_loud;
+  ]
+
+  [browser_2d.text("Times loud: " + times_loud, 10, 150, 24, "magenta", "left")]
+
+  [let c1 = browser_2d.circle(50 + MIC.audio_level*TIME.t*10, 
+            "rgb("+(times_loud*10)+","+(255-times_loud*10)+",0)"
+            )]
