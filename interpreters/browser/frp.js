@@ -194,39 +194,96 @@ function dynamicColor(arg, path = 'fillColor') {
     return dynamicProp(arg, path, parseColor);
 }
 
-// Support dynamic SIZE args on shape creators (radius, width, ...). If `arg` is a
-// string/function, the shape is built at the expression's current value (the "base")
-// and a scaling dynamic is registered on `propName`.`axes` so its size keeps following
-// the expression: effective size = base * (expr / base) = expr, at any creation time.
-// Returns { base } to build with, and register(item) to call once the item exists
-// (a no-op for plain numeric args).
+// Once a mutator (currently: scale()) explicitly takes control of a
+// (item, path) — e.g. by snapping or tweening it to a fixed value — a
+// creator's own reconciled re-invocation must permanently back off from that
+// axis, forever (for this item's lifetime), rather than re-asserting its own
+// size-driven value. Without this, dynamicSize's guard below (which only
+// checks "is *something* currently registered") gets fooled the moment the
+// mutator's effect isn't itself an ongoing dynamicProps registration (a snap,
+// or a tween that has since completed and self-unregistered) — the very next
+// reconciled tick would see nothing registered and reassert its own scaling,
+// silently undoing the mutator's call. Keyed by item, not by item+path pairs
+// individually, since a WeakMap can't nest cleanly — a small Set per item.
+const takenOverPaths = new WeakMap(); // item -> Set<path>
+
+function markTakenOver(item, path) {
+    let set = takenOverPaths.get(item);
+    if (!set) { set = new Set(); takenOverPaths.set(item, set); }
+    set.add(path);
+}
+function isTakenOver(item, path) {
+    const set = takenOverPaths.get(item);
+    return !!set && set.has(path);
+}
+
+// The "original size" baseline per (item, path) — the value this axis was
+// FIRST driven at, used as the denominator for every later scaling-ratio
+// computation. Deliberately NOT the same as whatever a creator stores in its
+// own display-facing prop (e.g. props.radius) — that field gets overwritten
+// every reconciled tick with the *latest* desired value (harmless, since
+// nothing re-reads it after construction — see dynamicSize below), which
+// would make it useless as a stable denominator to compare against.
+const sizeBases = new WeakMap(); // item -> Map<path, baseValue>
+
+// Support dynamic SIZE args on shape creators (radius, width, ...). Effective
+// size = base * (current value / base) = current value, at any time — the
+// mechanism differs by how `arg` is supplied:
+// - string/function: `dynamicSize`'s OWN registered dynamic ticks this
+//   forever, on frp.js's clock, independent of whether the creator is ever
+//   called again (needed for a one-off `[!...]` bracket, where nothing else
+//   would keep re-evaluating it).
+// - plain number: no independent ticking of its own — relies on the RECONCILER
+//   re-invoking the creator every tick (a continuous, non-`!` bracket) and
+//   simply writes the current ratio directly, right now, each time it's
+//   called. This is what makes `circle(50 + TIME.t, "red")` (no wrapper) grow
+//   correctly inside a continuous bracket, without needing dynamicSize's own
+//   ticking mechanism at all.
+// Returns { base } to build the initial geometry with, and register(item) to
+// call once the item exists (every tick is fine — see the two guards below).
 //
 // GUARDED against re-registration (PHASE2 plan section E, part 1): `register`
 // is safe to call every tick — from a fresh creation OR a reconciled update of
-// the *same* item — because it skips (re-)registering any axis that already
-// has an active dynamic for this item. Without this guard, a continuous
-// bracket's creator call being reconciled every tick would re-capture `base`
-// as the *current* value on every tick, collapsing the growth ratio
-// (fn() / base) to 1 forever — this is exactly what both acceptance scripts'
-// growing-circle line would hit if this guard were missing or wrong.
+// the *same* item — because it never recaptures `sizeBases`' stored baseline
+// once set, and never re-registers a string/function dynamic that's already
+// ticking. Without this, a continuous bracket's creator call being reconciled
+// every tick would re-capture the baseline as the *current* value on every
+// tick, collapsing the growth ratio to 1 forever.
+//
+// ALSO GUARDED against fighting a mutator that has taken ownership of this
+// axis (`isTakenOver`, above) — e.g. after `scale(c1, 2)`, this backs off
+// entirely and never touches that axis again for this item.
 //
 // @param {*}        arg       number, "t"-expression string, or ()=>value function
 // @param {string}   propName  the item's scale property name ("scale" for Three.js, "scaling" for Paper.js)
 // @param {string[]} axes      which axes to drive, e.g. ['x','y'] or ['x','y','z']
 function dynamicSize(arg, propName, axes) {
-    if (typeof arg !== 'string' && typeof arg !== 'function') {
-        return { base: arg, register: () => {} };
-    }
-    const fn = toDynamicFn(arg);
-    const base = fn() || 1;   // nonzero so the scaling ratio is well-defined
+    const isDynamic = typeof arg === 'string' || typeof arg === 'function';
+    const fn = isDynamic ? toDynamicFn(arg) : null;
+    const base = isDynamic ? (fn() || 1) : arg;   // nonzero so the scaling ratio is well-defined
+
     return {
         base,
         register: (item) => {
-            const existing = dynamicProps.get(item);
+            let bases = sizeBases.get(item);
+            if (!bases) { bases = new Map(); sizeBases.set(item, bases); }
+
             for (const axis of axes) {
                 const path = `${propName}.${axis}`;
-                if (existing && existing.has(path)) continue; // already ticking, correctly-timed — don't recapture base
-                registerDynamic(item, path, () => fn() / base);
+                if (isTakenOver(item, path)) continue; // a mutator (scale()) owns this now — back off permanently
+
+                if (isDynamic) {
+                    if (!bases.has(path)) bases.set(path, base); // capture once, at first registration only
+                    const existing = dynamicProps.get(item);
+                    if (existing && existing.has(path)) continue; // already ticking, correctly-timed — don't recapture
+                    const b = bases.get(path);
+                    registerDynamic(item, path, () => fn() / b);
+                } else {
+                    if (!bases.has(path)) bases.set(path, arg || 1); // first time: this number IS the baseline (ratio 1)
+                    const b = bases.get(path);
+                    unregisterDynamic(item, path); // clear any leftover dynamic (e.g. arg switched from function to number)
+                    setPath(item, path, (arg || 0) / b);
+                }
             }
         },
     };
@@ -257,4 +314,5 @@ window.tickDynamicProps = tickDynamicProps;
 window.dynamicProp = dynamicProp;
 window.dynamicColor = dynamicColor;
 window.dynamicSize = dynamicSize;
+window.markTakenOver = markTakenOver;
 window.audioBaseScale = audioBaseScale;

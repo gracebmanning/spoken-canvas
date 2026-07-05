@@ -145,6 +145,24 @@
             if (kind === 'line' || kind === 'arrow' || kind === 'box') {
                 item.strokeWidth = props.strokeWidth;
             }
+            // Unlike a circle's radius, a Path's segment points ARE freely
+            // rewritable after construction — so endpoint coordinates can be
+            // reactive too, just by re-applying them every tick (the editor's
+            // reconciler already recomputes props.from/to/lines fresh on every
+            // reconciled call; this is the piece that was missing to make that
+            // visible).
+            if (kind === 'line' && props.from && props.to) {
+                item.firstSegment.point = new Point(props.from.x, props.from.y);
+                item.lastSegment.point = new Point(props.to.x, props.to.y);
+            }
+            if (kind === 'arrow' && props.lines) {
+                props.lines.forEach((seg, i) => {
+                    const child = item.children[i];
+                    if (!child) return;
+                    child.firstSegment.point = new Point(seg.from.x, seg.from.y);
+                    child.lastSegment.point = new Point(seg.to.x, seg.to.y);
+                });
+            }
 
             if (props.position) item.position = new Point(props.position.x, props.position.y);
             if (props.scaling) item.scaling = new Point(props.scaling.x, props.scaling.y);
