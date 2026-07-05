@@ -1,12 +1,19 @@
 /**
- * frp.js — shared scene-graph animation engine for the browser interpreters.
+ * frp.js — the scene-graph animation engine. Since the FRP-centralization
+ * refactor (see listener/FRP_CENTRALIZATION_PLAN.md), this is loaded and runs
+ * ONLY in the editor (listener/listen2/editor.html) — the interpreter worlds
+ * (browser_2d.html/browser_3d.html) no longer load it at all.
  *
  * Every continuous value (position, rotation, scale, opacity, color, ...) is
- * stored as a function(ctx) => value. The top-level editor owns the clock and
- * the microphone; once per frame it posts {type:"tick", ctx:{t, dt, audioLevel}}
- * to each interpreter iframe (see listen2/editor.html). A world's onTick
- * handler just calls applyTick(ctx) then renders — see interpreter_core.js's
- * connectToEditor().
+ * stored as a function(ctx) => value, keyed by whatever plain object owns that
+ * path — for Phase 1 that's a world's {id, kind, props} state-store entry's
+ * `props`, not a live Paper.js/Three.js object; everything below is generic
+ * over "any object with dot-paths" and needed no changes for that. The editor
+ * owns the clock and the microphone; once per frame it calls applyTick(ctx)
+ * itself (advancing every registered dynamic across both worlds' state
+ * stores), then posts each world's fully-resolved state down as
+ * {type:"applyOps", t, ops, removed} (see editor.html's tick()). A world's
+ * applyOps handler just turns that into native objects and renders.
  *
  * A value can be supplied three ways wherever a world's API accepts one:
  * 1. Numeric value (tween from current value to target over 'duration' seconds)
@@ -204,10 +211,9 @@ function dynamicSize(arg, propName, axes) {
 // read and clear this the same way; shared so the behavior is identical everywhere.
 const audioBaseScale = new WeakMap();   // item -> Vector3 | Point
 
-// Expose on the global scope. Explicit assignment (rather than relying on bare
-// top-level declarations) matters here: browser_3d.html's <script type="module">
-// can only see actual window properties, not another classic script's top-level
-// let/const bindings.
+// Expose on the global scope explicitly (rather than relying on bare top-level
+// declarations), so editor.html's own inline <script> can reach these
+// regardless of exactly how it's structured.
 window.dynamicProps = dynamicProps;
 window.registerDynamic = registerDynamic;
 window.unregisterDynamic = unregisterDynamic;

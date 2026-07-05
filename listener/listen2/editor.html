@@ -10,6 +10,15 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
 
+  <!-- The FRP-centralization refactor moves the verb functions (circle, cube,
+       move, ...) and the animation engine into the editor itself; the
+       interpreter iframes become dumb renderers (see FRP_CENTRALIZATION_PLAN.md).
+       These are served under /interpreters/ (see listen2.py's
+       _serve_interpreter_file) — editor.html is served at a different base
+       path than browser_2d.html/browser_3d.html, so these MUST be absolute. -->
+  <script src="/interpreters/colors.js"></script>
+  <script src="/interpreters/frp.js"></script>
+
   <style>
     html, body {
       margin: 0;
@@ -125,9 +134,656 @@
       mode: null,
     });
 
+    // ======================================================================
+    // FRP ENGINE + VERB FUNCTIONS (centralized here; see
+    // FRP_CENTRALIZATION_PLAN.md — Phase 1)
+    // ======================================================================
+    // Script code no longer evaluates inside the interpreter iframes. It
+    // evaluates HERE, against a plain per-world state store of
+    // {id, kind, props}. Once per frame (see tick() below) the editor resolves
+    // every dynamic prop via frp.js's tickDynamicProps(), then posts each
+    // world's full current state down as {type:"applyOps", t, ops, removed}.
+    // Each world just turns that into native Paper.js/Three.js objects — it
+    // never sees script text and never calls eval.
+    const WORLD_NAMES = ["browser_2d", "browser_3d"];
+
+    // Paper.js's canvas is a fixed 1920x1080 (see the .frame CSS / browser_2d's
+    // canvas.width/height); the editor doesn't load Paper.js, so it can't ask
+    // `view.center` for the default center the way the old creators did —
+    // hardcode the equivalent instead.
+    const DEFAULT_CENTER_2D = { x: 960, y: 540 };
+
+    // Resolve a color to hex {r,g,b} in 0..1 (THREE.Color-shaped) without
+    // depending on THREE.js, which the editor never loads. Only used by the 3D
+    // world's `color()` mutator, which needs per-channel numbers to support
+    // tweening (a plain props object can't hold a live THREE.Color that
+    // auto-parses hex strings the way the old per-iframe code relied on).
+    function hexToRgb01(hex) {
+      const s = String(hex).replace('#', '');
+      const full = s.length === 3 ? s.split('').map((c) => c + c).join('') : s.padStart(6, '0');
+      const num = parseInt(full, 16) || 0;
+      return {
+        r: ((num >> 16) & 0xff) / 255,
+        g: ((num >> 8) & 0xff) / 255,
+        b: (num & 0xff) / 255,
+      };
+    }
+
+    // Per-world state store: Map<id, {kind, props}>. `props` is a plain object
+    // whose paths are exactly what frp.js's registerDynamic/setPath/getPath
+    // already operate on generically — it's just a plain object instead of a
+    // live Paper/Three object now. Creator verbs allocate a new id+entry;
+    // mutator verbs look up an existing id (via the handle) and modify props;
+    // remove()/clear() delete entries and record removed ids for the next tick.
+    const stateStores = {};      // world -> Map<id, {kind, props}>
+    const removedSinceTick = {}; // world -> [id, ...] destroyed since the last tick
+    const idCounters = {};       // world -> next id
+
+    // Isolated one-liner so Phase 2 can swap this for a
+    // (bracket source position, let-binding name) identity scheme later
+    // without touching anything else.
+    function nextId(world) {
+      return idCounters[world]++;
+    }
+
+    function removeFromWorld(world, id) {
+      const store = stateStores[world];
+      const entry = store.get(id);
+      if (!entry) return;
+      dynamicProps.delete(entry.props); // stop any active tweens/expressions
+      store.delete(id);
+      removedSinceTick[world].push(id);
+    }
+
+    // clear() is just "remove everything" — translated into repeated
+    // removeFromWorld() rather than a second code path, and importantly scoped
+    // to THIS world's entries only: dynamicProps is now a single Map shared by
+    // both worlds (frp.js runs once, centrally), so a blanket
+    // dynamicProps.clear() here would also wipe the other world's animations.
+    function clearWorld(world) {
+      for (const id of Array.from(stateStores[world].keys())) removeFromWorld(world, id);
+    }
+
+    function resolveHandle(world, handle) {
+      if (!handle || handle.__world !== world) {
+        console.error(`[${world}] invalid handle (from another world?):`, handle);
+        return null;
+      }
+      const entry = stateStores[world].get(handle.__id);
+      if (!entry) console.error(`[${world}] handle refers to a removed/unknown id:`, handle);
+      return entry || null;
+    }
+
+    // ---- 2D verb functions (Paper.js-shaped props) -----------------------
+    // Argument resolution (number | "t"-expression string | (ctx)=>value) is
+    // unchanged from before — dynamicSize/dynamicColor/dynamicProp/applyDynamic
+    // (frp.js) already normalize that generically; only what they're pointed
+    // at changes (a plain props object's paths instead of a Paper.js item).
+    function makeWorld2DApi(world) {
+      const store = () => stateStores[world];
+
+      // Any size arg (radius/width/height) may be a number, a "t"-expression
+      // string, or a (ctx)=>value function; a dynamic one makes the shape grow/
+      // shrink over time. Ex: circle((c) => 50 + c.t, "red")
+      function circle(radius, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
+        const id = nextId(world);
+        const r = dynamicSize(radius, 'scaling', ['x', 'y']);
+        const col = dynamicColor(color);
+        const props = {
+          position: { x, y },
+          radius: r.base,
+          scaling: { x: 1, y: 1 },
+          rotation: 0,
+          opacity: 1,
+          fillColor: parseColor(col.base),
+        };
+        store().set(id, { kind: 'circle', props });
+        r.register(props);
+        col.register(props);
+        return { __world: world, __id: id };
+      }
+
+      function square(size, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
+        const id = nextId(world);
+        const s = dynamicSize(size, 'scaling', ['x', 'y']);
+        const col = dynamicColor(color);
+        const props = {
+          position: { x, y },
+          size: { width: s.base, height: s.base },
+          scaling: { x: 1, y: 1 },
+          rotation: 0,
+          opacity: 1,
+          fillColor: parseColor(col.base),
+        };
+        store().set(id, { kind: 'square', props });
+        s.register(props);
+        col.register(props);
+        return { __world: world, __id: id };
+      }
+
+      function rect(width, height, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
+        const id = nextId(world);
+        const w = dynamicSize(width, 'scaling', ['x']);
+        const h = dynamicSize(height, 'scaling', ['y']);
+        const col = dynamicColor(color);
+        const props = {
+          position: { x, y },
+          size: { width: w.base, height: h.base },
+          scaling: { x: 1, y: 1 },
+          rotation: 0,
+          opacity: 1,
+          fillColor: parseColor(col.base),
+        };
+        store().set(id, { kind: 'rect', props });
+        w.register(props);
+        h.register(props);
+        col.register(props);
+        return { __world: world, __id: id };
+      }
+
+      function ellipse(width, height, color, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y) {
+        const id = nextId(world);
+        const w = dynamicSize(width, 'scaling', ['x']);
+        const h = dynamicSize(height, 'scaling', ['y']);
+        const col = dynamicColor(color);
+        const props = {
+          position: { x, y },
+          size: { width: w.base, height: h.base },
+          scaling: { x: 1, y: 1 },
+          rotation: 0,
+          opacity: 1,
+          fillColor: parseColor(col.base),
+        };
+        store().set(id, { kind: 'ellipse', props });
+        w.register(props);
+        h.register(props);
+        col.register(props);
+        return { __world: world, __id: id };
+      }
+
+      // Create an arrow from point A to point B. No dynamic size/color support
+      // in the old code either (only color could be dynamic) — preserved as-is.
+      function arrow(fromX, fromY, toX, toY, color = 'black', thickness = 3) {
+        const id = nextId(world);
+        const col = dynamicColor(color, 'strokeColor');
+
+        const dx = toX - fromX;
+        const dy = toY - fromY;
+        const angle = Math.atan2(dy, dx);
+        const arrowLength = 15;
+        const arrowAngle = Math.PI / 6; // 30 degrees
+
+        const lines = [
+          { from: { x: fromX, y: fromY }, to: { x: toX, y: toY } },
+          {
+            from: { x: toX, y: toY },
+            to: {
+              x: toX - arrowLength * Math.cos(angle - arrowAngle),
+              y: toY - arrowLength * Math.sin(angle - arrowAngle),
+            },
+          },
+          {
+            from: { x: toX, y: toY },
+            to: {
+              x: toX - arrowLength * Math.cos(angle + arrowAngle),
+              y: toY - arrowLength * Math.sin(angle + arrowAngle),
+            },
+          },
+        ];
+
+        const props = {
+          // Arrow has no natural single "position" the way a centered shape
+          // does; the from/to midpoint is a reasonable stand-in so move()/
+          // rotate()/scale() still work generically (a few-pixel recentering
+          // vs. the group's raw bounding box, which nothing depends on today).
+          position: { x: (fromX + toX) / 2, y: (fromY + toY) / 2 },
+          lines,
+          strokeWidth: thickness,
+          rotation: 0,
+          scaling: { x: 1, y: 1 },
+          opacity: 1,
+          strokeColor: parseColor(col.base),
+        };
+        store().set(id, { kind: 'arrow', props });
+        col.register(props);
+        return { __world: world, __id: id };
+      }
+
+      function line(fromX, fromY, toX, toY, color = 'white', thickness = 3) {
+        const id = nextId(world);
+        const col = dynamicColor(color, 'strokeColor');
+        const props = {
+          position: { x: (fromX + toX) / 2, y: (fromY + toY) / 2 },
+          from: { x: fromX, y: fromY },
+          to: { x: toX, y: toY },
+          strokeWidth: thickness,
+          rotation: 0,
+          scaling: { x: 1, y: 1 },
+          opacity: 1,
+          strokeColor: parseColor(col.base),
+        };
+        store().set(id, { kind: 'line', props });
+        col.register(props);
+        return { __world: world, __id: id };
+      }
+
+      // content may be a literal (number/string) or a (ctx)=>value function for
+      // live text. Ex: text((c) => "Time: " + c.t.toFixed(1), 400, 270, 100, "cyan")
+      function text(content, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, size = 24, color = 'white') {
+        const id = nextId(world);
+        const txt = dynamicProp(content, 'content', String);
+        const col = dynamicColor(color);
+        const props = {
+          position: { x, y },
+          content: String(txt.base),
+          fontSize: size,
+          rotation: 0,
+          scaling: { x: 1, y: 1 },
+          opacity: 1,
+          fillColor: parseColor(col.base),
+        };
+        store().set(id, { kind: 'text', props });
+        txt.register(props);
+        col.register(props);
+        return { __world: world, __id: id };
+      }
+
+      // Create a box (rectangle with border, no fill) - useful for diagrams
+      function box(width, height, color = 'white', x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, borderWidth = 2) {
+        const id = nextId(world);
+        const w = dynamicSize(width, 'scaling', ['x']);
+        const h = dynamicSize(height, 'scaling', ['y']);
+        const col = dynamicColor(color, 'strokeColor');
+        const props = {
+          position: { x, y },
+          size: { width: w.base, height: h.base },
+          scaling: { x: 1, y: 1 },
+          rotation: 0,
+          opacity: 1,
+          strokeColor: parseColor(col.base),
+          strokeWidth: borderWidth,
+          fillColor: null,
+        };
+        store().set(id, { kind: 'box', props });
+        w.register(props);
+        h.register(props);
+        col.register(props);
+        return { __world: world, __id: id };
+      }
+
+      /**
+       * Move an item. Each of x/y can be a number (snap or tween), a "t"-expression
+       * string, or a (ctx)=>value function. Mixed args allowed.
+       * Ex: move(c, "center.x + 200 * Math.sin(t)", center.y)
+       */
+      function move(handle, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, duration = 0) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        applyDynamic(entry.props, 'position.x', x, duration);
+        applyDynamic(entry.props, 'position.y', y, duration);
+      }
+
+      /**
+       * Rotate an item to an ABSOLUTE angle in degrees (matches browser_3d).
+       * Number => snap/tween; string/function => continuous, e.g. "t * 60" spins 60 deg/sec.
+       */
+      function rotate(handle, degrees = 0, duration = 0) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        applyDynamic(entry.props, 'rotation', degrees, duration);
+      }
+
+      /**
+       * Scale an item by an ABSOLUTE factor (1 = original size). sy defaults to sx.
+       * Number => snap/tween; string/function => continuous pulse.
+       */
+      function scale(handle, sx = 1.0, sy, duration = 0) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        if (sy === undefined) sy = sx;
+        audioBaseScale.delete(entry.props);   // take over scale control, drop audio reactivity
+        applyDynamic(entry.props, 'scaling.x', sx, duration);
+        applyDynamic(entry.props, 'scaling.y', sy, duration);
+      }
+
+      /**
+       * Set an item's opacity (0 = invisible, 1 = opaque).
+       */
+      function fade(handle, value = 1.0, duration = 0) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        applyDynamic(entry.props, 'opacity', value, duration);
+      }
+
+      /**
+       * Make item(s) reactive to microphone audio (uniform scale pulse).
+       * Ex: audio_reactive(c1, 0.8, 1.3) or audio_reactive([c1, c2], 0.8, 1.3)
+       */
+      function audio_reactive(handles, low = 0.8, high = 1.0) {
+        const list = Array.isArray(handles) ? handles : [handles];
+        for (const handle of list) {
+          const entry = resolveHandle(world, handle);
+          if (!entry) continue;
+          let base = audioBaseScale.get(entry.props);
+          if (!base) {
+            base = { x: entry.props.scaling.x, y: entry.props.scaling.y };
+            audioBaseScale.set(entry.props, base);
+          }
+          for (const axis of ['x', 'y']) {
+            const b = base[axis];
+            registerDynamic(entry.props, `scaling.${axis}`, (ctx) => b * (low + (high - low) * ctx.audioLevel));
+          }
+        }
+      }
+
+      function remove(handle) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        removeFromWorld(world, handle.__id);
+      }
+
+      function clear() {
+        clearWorld(world);
+      }
+
+      return { circle, square, rect, ellipse, arrow, line, text, box, move, rotate, scale, fade, opacity: fade, audio_reactive, remove, clear };
+    }
+
+    // ---- 3D verb functions (Three.js-shaped props) -----------------------
+    // 3D creators have no dynamic-size/color support today, matching the old
+    // per-iframe code (not added — out of scope here too): geometry and the
+    // initial color are fixed numbers/strings resolved once, at creation.
+    function makeWorld3DApi(world) {
+      const store = () => stateStores[world];
+
+      /** Create a box mesh and add it to the scene. */
+      function cube(sizex = 1.0, sizey, sizez, color = "white", x = 0, y = 0) {
+        if (sizey === undefined) sizey = sizex;
+        if (sizez === undefined) sizez = sizex;
+        const id = nextId(world);
+        const props = {
+          size: { x: sizex, y: sizey, z: sizez },
+          position: { x, y, z: 0 },
+          rotation: { x: 0, y: 0, z: 0 },
+          scale: { x: 1, y: 1, z: 1 },
+          color: hexToRgb01(parseColor(color)),
+          opacity: 1,
+          transparent: false,
+          noiseIntensity: 0,
+        };
+        store().set(id, { kind: 'cube', props });
+        return { __world: world, __id: id };
+      }
+
+      /** Create a sphere or ellipsoid. A string in any size slot is the color. */
+      function sphere(radx = 0.5, rady, radz, color = "white", x = 0, y = 0) {
+        if (rady === undefined) rady = radx;
+        if (radz === undefined) radz = radx;
+        const id = nextId(world);
+        const props = {
+          radius: { x: radx, y: rady, z: radz },
+          position: { x, y, z: 0 },
+          rotation: { x: 0, y: 0, z: 0 },
+          scale: { x: 1, y: 1, z: 1 },
+          color: hexToRgb01(parseColor(color)),
+          opacity: 1,
+          transparent: false,
+          noiseIntensity: 0,
+        };
+        store().set(id, { kind: 'sphere', props });
+        return { __world: world, __id: id };
+      }
+
+      /** Create a torus (donut shape). String shorthand: torus(0.6, "orange"). */
+      function torus(radx = 0.5, rady = 0.25, color = "white", x = 0, y = 0) {
+        const id = nextId(world);
+        const props = {
+          radius: { outer: radx, tube: rady },
+          position: { x, y, z: 0 },
+          rotation: { x: 0, y: 0, z: 0 },
+          scale: { x: 1, y: 1, z: 1 },
+          color: hexToRgb01(parseColor(color)),
+          opacity: 1,
+          transparent: false,
+          noiseIntensity: 0,
+        };
+        store().set(id, { kind: 'torus', props });
+        return { __world: world, __id: id };
+      }
+
+      /** Create a tube: cylinder, cone, or truncated cone (frustum). */
+      function tube(rad1 = 0.5, rad2, height = 0.5, color = "white", x = 0, y = 0) {
+        if (rad2 === undefined) rad2 = rad1; // cylinder by default
+        const id = nextId(world);
+        const props = {
+          radius: { top: rad1, bottom: rad2 },
+          height,
+          position: { x, y, z: 0 },
+          rotation: { x: 0, y: 0, z: 0 },
+          scale: { x: 1, y: 1, z: 1 },
+          color: hexToRgb01(parseColor(color)),
+          opacity: 1,
+          transparent: false,
+          noiseIntensity: 0,
+        };
+        store().set(id, { kind: 'tube', props });
+        return { __world: world, __id: id };
+      }
+
+      /**
+       * Create a point cloud (scattered Gaussian points). Like vertex noise,
+       * the actual per-point scatter is a native, largish data blob generated
+       * once, locally, by the 3D world from these small scalar props — see
+       * browser_3d.html's constructNative('cloud', ...).
+       */
+      function cloud(quantity = 1.0, spread = 1.0, color = "white", shape = "circle", x = 0, y = 0) {
+        const id = nextId(world);
+        const props = {
+          quantity,
+          spread,
+          pointShape: shape,
+          position: { x, y, z: 0 },
+          rotation: { x: 0, y: 0, z: 0 },
+          scale: { x: 1, y: 1, z: 1 },
+          color: hexToRgb01(parseColor(color)),
+          opacity: 1,
+          transparent: false,
+          noiseIntensity: 0,
+        };
+        store().set(id, { kind: 'cloud', props });
+        return { __world: world, __id: id };
+      }
+
+      /** Move a shape. Each axis arg: number (snap/tween), "t"-expression, or (ctx)=>value. */
+      function move(handle, x = 0.0, y = 0.0, z = 0.0, duration = 0) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        applyTransform(entry.props, 'position', x, y, z, duration);
+      }
+
+      /**
+       * Rotate a shape. Angles are in degrees, converted to radians here (the
+       * editor), exactly where the old per-iframe code used to convert them —
+       * the world receives already-radian values, matching Three's native unit.
+       */
+      function rotate(handle, rx = 0.0, ry = 0.0, rz = 0.0, duration = 0) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        const degToRad = (deg) => deg * Math.PI / 180;
+        applyTransform(entry.props, 'rotation', rx, ry, rz, duration, degToRad);
+      }
+
+      /** Scale a shape. sy/sz default to sx. scale(b1) with no other args resets to (1,1,1). */
+      function scale(handle, sx = 1.0, sy, sz, duration = 0) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        if (sy === undefined) sy = sx;
+        if (sz === undefined) sz = sx;
+        audioBaseScale.delete(entry.props); // take over scale control and drop audio reactivity
+        applyTransform(entry.props, 'scale', sx, sy, sz, duration);
+      }
+
+      /** Make shape(s) reactive to microphone audio. */
+      function audio_reactive(handles, low = 0.8, high = 1.0) {
+        const list = Array.isArray(handles) ? handles : [handles];
+        for (const handle of list) {
+          const entry = resolveHandle(world, handle);
+          if (!entry) continue;
+          let base = audioBaseScale.get(entry.props);
+          if (!base) {
+            base = { x: entry.props.scale.x, y: entry.props.scale.y, z: entry.props.scale.z };
+            audioBaseScale.set(entry.props, base);
+          }
+          for (const axis of ['x', 'y', 'z']) {
+            const b = base[axis];
+            registerDynamic(entry.props, `scale.${axis}`, (ctx) => b * (low + (high - low) * ctx.audioLevel));
+          }
+        }
+      }
+
+      /**
+       * Give a shape organic movement by drifting its vertices with a noise
+       * field. This just sets a single scalar prop — the actual per-vertex
+       * drift stays local to the 3D world (see updateVertexNoise there).
+       * noise(shape, 0) stops and snaps back to the original positions.
+       */
+      function noise(handle, intensity = 0.5) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        entry.props.noiseIntensity = Math.max(0, Math.min(1, intensity));
+      }
+
+      /** Recolor a shape. */
+      function color(handle, colorValue, duration = 0) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        const target = hexToRgb01(parseColor(colorValue));
+        unregisterDynamic(entry.props, 'color.r');
+        unregisterDynamic(entry.props, 'color.g');
+        unregisterDynamic(entry.props, 'color.b');
+        if (duration > 0) {
+          registerTween(entry.props, 'color.r', target.r, duration);
+          registerTween(entry.props, 'color.g', target.g, duration);
+          registerTween(entry.props, 'color.b', target.b, duration);
+        } else {
+          entry.props.color = target;
+        }
+      }
+
+      /** Set a shape's opacity (0 = invisible, 1 = opaque). */
+      function opacity(handle, value = 1.0, duration = 0) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+
+        if (typeof value === 'string' || typeof value === 'function') {
+          // expression/function -> per-frame opacity; can dip below 1 at any
+          // time, so the world must keep blending on regardless of duration.
+          entry.props.transparent = true;
+          registerDynamic(entry.props, 'opacity', toDynamicFn(value));
+          return;
+        }
+
+        // numeric: stop any running fade/expression first.
+        unregisterDynamic(entry.props, 'opacity');
+        if (duration > 0) {
+          entry.props.transparent = true; // dips below 1 mid-fade
+          registerTween(entry.props, 'opacity', value, duration);
+        } else {
+          entry.props.opacity = value;
+          entry.props.transparent = value < 1; // only blend when not fully opaque
+        }
+      }
+
+      function remove(handle) {
+        const entry = resolveHandle(world, handle);
+        if (!entry) return;
+        removeFromWorld(world, handle.__id);
+      }
+
+      function clear() {
+        clearWorld(world);
+      }
+
+      return { cube, sphere, torus, tube, cloud, move, rotate, scale, audio_reactive, noise, color, opacity, remove, clear };
+    }
+
+    // Verb functions live on a prototype object per world, so `with`'s
+    // property lookup finds them (HasBinding walks the prototype chain) without
+    // them ever being own properties that a restart's "fresh scope" would wipe.
+    const worldApis = {
+      browser_2d: makeWorld2DApi('browser_2d'),
+      browser_3d: makeWorld3DApi('browser_3d'),
+    };
+
+    function freshWorldScope(world) {
+      return Object.create(worldApis[world]);
+    }
+
+    // Per-world namespace objects. `[browser_2d: let x = ...]` and
+    // `[browser_3d: let x = ...]` evaluate against separate objects here, so a
+    // bare `x` in one can't collide with a bare `x` in the other — see
+    // evalInWorld()/globalizeDeclarationsForWith() below. This also happens to
+    // make `worlds.browser_2d.someHandle` a plain property read, which is the
+    // shape Phase 3's cross-world dot-syntax needs later (not built now).
+    const worlds = {};
+
+    function resetWorldState() {
+      for (const world of WORLD_NAMES) {
+        stateStores[world] = new Map();
+        removedSinceTick[world] = [];
+        idCounters[world] = 1;
+        worlds[world] = freshWorldScope(world);
+      }
+    }
+    resetWorldState();
+
+    /**
+     * Promote top-of-statement `let`/`const`/`var` declarations to plain
+     * assignment (NOT `window.NAME =` — that's interpreter_core.js's old,
+     * global-scope-only version, wrong for this per-world scheme) so `with`
+     * binds them onto `worldObj`.
+     *
+     * `with`'s identifier resolution only intercepts a name if it's already
+     * a property of `worldObj` (its HasBinding check is effectively `name in
+     * worldObj`, including the prototype chain) — so a *first* assignment to a
+     * name `with` doesn't yet know about would fall through and leak onto the
+     * global object instead, in non-strict mode. Pre-declaring every name this
+     * command will assign (as `undefined`, if not already present) closes that
+     * hole before eval'ing.
+     */
+    function globalizeDeclarationsForWith(code, worldObj) {
+      for (const m of code.matchAll(/(^|\n|;)(\s*)(?:let|const|var)\s+(\w+)\s*=/g)) {
+        const name = m[3];
+        if (!(name in worldObj)) worldObj[name] = undefined;
+      }
+      return code.replace(/(^|\n|;)(\s*)(?:let|const|var)\s+(\w+)\s*=/g, "$1$2$3 =");
+    }
+
+    // Evaluate `code` against `worlds[target]`'s namespace. Must be a DIRECT
+    // eval call (`eval(...)`, not the indirect `(0, eval)(...)` form
+    // interpreter_core.js's old executeCommand used) — indirect eval always
+    // runs in the global scope and would never see the `with` binding below;
+    // only a direct eval call sees the lexical scope (including `with`) it's
+    // written in. This requires this whole page's script to stay non-strict
+    // (no "use strict", not a module) since `with` is disallowed in strict mode.
+    function evalInWorld(target, code) {
+      const worldObj = worlds[target];
+      const rewritten = globalizeDeclarationsForWith(code, worldObj);
+      try {
+        with (worldObj) {
+          eval(rewritten);
+        }
+      } catch (e) {
+        console.error(`[${target}] execution error:`, e);
+      }
+    }
+
     // ---- Command dispatch -------------------------------------------------
-    // Commands are posted directly to the interpreter iframes (same page,
-    // same origin) — no relay process involved.
+    // Bracket routing/timing is unchanged from before: one-shot execution when
+    // the listener lands on the word, single target per bracket, `[world: code]`
+    // colon syntax (default target browser_2d). The only thing that changed is
+    // *where* code evaluates — here, against that world's namespace — instead
+    // of being posted into that world's iframe.
     const INTERPRETER_TARGETS = ["browser_2d", "browser_3d"];
     const DEFAULT_TARGET = "browser_2d";
     const TARGET_FRAMES = {
@@ -136,10 +792,7 @@
     };
 
     function sendCommand(target, code) {
-      const frame = TARGET_FRAMES[target];
-      if (frame && frame.contentWindow) {
-        frame.contentWindow.postMessage({ type: "execute", code }, "*");
-      }
+      evalInWorld(target, code);
     }
 
     // Route "browser_2d: circle(...)" -> { target, code }; an unrecognized or
@@ -184,14 +837,16 @@
     if (window.ResizeObserver) new ResizeObserver(fitStage).observe(stage);
     fitStage();
 
-    // ---- FRP clock + microphone (owned here, broadcast to the iframes) --
-    // The editor is the single source of the animation clock and the mic level.
-    // The mic is opened once at the top level so there's a single permission
-    // prompt and one analyser. Once per frame we post
-    // {type:"tick", ctx:{t, dt, audioLevel}} to every interpreter iframe; each
-    // world advances its own dynamics from that ctx and renders (see frp.js's
-    // applyTick and each world's onTick handler). Interpreters never touch
-    // getUserMedia or requestAnimationFrame themselves.
+    // ---- FRP clock + microphone (owned here, drives the FRP engine) -----
+    // The editor is the single source of the animation clock and the mic level,
+    // AND (since Phase 1) the only place frp.js's applyTick/tickDynamicProps
+    // run at all. The mic is opened once at the top level so there's a single
+    // permission prompt and one analyser. Once per frame (see tick() below) we
+    // advance every registered dynamic ourselves, then post each world's
+    // resolved {id, kind, props} state down as {type:"applyOps", ...}.
+    // Interpreters never touch getUserMedia, requestAnimationFrame, or frp.js
+    // themselves anymore — see interpreters/browser/browser_2d.html /
+    // browser_3d.html's applyOps handlers.
     const RMS_GAIN = 5;             // voice RMS is small; lift it toward 0..1 (tune knob)
     const AUDIO_SMOOTHING = 0.8;    // 0 = instant & jittery, ->1 = heavy lag (tune knob)
 
@@ -249,8 +904,12 @@
       audioLevel = audioLevel * AUDIO_SMOOTHING + target * (1 - AUDIO_SMOOTHING);
     }
 
-    // The single master clock: computes t/dt, refreshes audioLevel, and posts
-    // one tick per frame to every interpreter iframe.
+    // The single master clock: computes t/dt, refreshes audioLevel, advances
+    // every registered dynamic (frp.js's tickDynamicProps, via applyTick), and
+    // posts each world's full current {id, kind, props} state down as
+    // {type:"applyOps", t, ops, removed} — this fully replaces the old raw
+    // {type:"tick", ctx} message now that `t` rides along and neither world
+    // runs applyTick/its own clock anymore.
     function tick(nowMs) {
       requestAnimationFrame(tick);
       if (startMs === null) startMs = nowMs;
@@ -264,8 +923,20 @@
       };
       lastMs = nowMs;
 
-      for (const f of frames) {
-        if (f.contentWindow) f.contentWindow.postMessage({ type: "tick", ctx }, "*");
+      applyTick(ctx); // advance every registered dynamic across both worlds' state stores
+
+      for (const world of WORLD_NAMES) {
+        const ops = [];
+        for (const [id, entry] of stateStores[world]) {
+          ops.push({ id, kind: entry.kind, props: entry.props });
+        }
+        const removed = removedSinceTick[world];
+        removedSinceTick[world] = [];
+
+        const frame = TARGET_FRAMES[world];
+        if (frame && frame.contentWindow) {
+          frame.contentWindow.postMessage({ type: "applyOps", t: ctx.t, ops, removed }, "*");
+        }
       }
     }
     requestAnimationFrame(tick);
@@ -335,13 +1006,16 @@
     }
 
     // Start over: jump back to the first word, reset the clock so t starts at
-    // 0 again, and reload the interpreter iframes so their state is wiped
-    // clean. We don't execute on landing here.
+    // 0 again, wipe the editor's own per-world state stores/namespaces (so ids
+    // and `let`-bound handles don't leak across a restart), and reload the
+    // interpreter iframes so their native objects are wiped clean too. We
+    // don't execute on landing here.
     function restart() {
       wordIndex = 0;
       refreshMark(true);
       startMs = null;
       lastMs = null;
+      resetWorldState();
       frames.forEach((f) => { f.contentWindow.location.reload(); });
     }
 

@@ -1,9 +1,6 @@
-Let's begin with a circle. 
-  [browser_2d: let c1 = circle((c)=>(50+c.t), 
-                               (c)=>(c.t < 10 ? "lime" : "red"))]
 
 Let's play with text:
-  [text((c)=>("Time: " + c.t.toFixed(1)), 400, 270, 100, "cyan")]
+  [let t = text((c)=>("Time: " + c.t.toFixed(1)), 400, 270, 100, "cyan")]
 
   [text((c)=>("Mic: " + c.audioLevel.toFixed(1)), 400, 370, 100, "red")]
 
@@ -11,8 +8,8 @@ Let's play with text:
 
   [text((c)=>("Mic*10: " + x(c).toFixed(1)), 400, 470, 100, "yellow")]
 
-Let's scale the circle:
-  [browser_2d: scale(c1, (c)=>(c.t/10))]
+Let's begin with a circle. 
+  [let c1 = circle((c) => 50 * c.audioLevel + c.t, (c) => c.t < 10 ? "lime" : "red")]
 
 A cube appears. 
  [browser_3d: let block = cube(1.2, 1.2, 1.2, "gray")] [browser_3d: rotate(block, 

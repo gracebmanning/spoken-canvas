@@ -13,11 +13,7 @@
         }
       }
     </script>
-    <!-- Shared color palette (defines COLOR_MAP and parseColor globally) -->
-    <script src="colors.js"></script>
-    <!-- Shared scene-graph animation engine (dynamicProps, tween, applyTick, ...) -->
-    <script src="frp.js"></script>
-    <!-- Shared interpreter plumbing (executeCommand + connectToEditor) -->
+    <!-- Shared interpreter plumbing (connectToEditor's applyOps listener) -->
     <script src="interpreter_core.js"></script>
     <style>
         body {
@@ -101,12 +97,16 @@
             camera.updateProjectionMatrix();
         });
 
-        // The scene-graph animation engine (dynamicProps, registerDynamic, tween,
-        // applyTransform, buildContext/applyTick, ...) lives in frp.js and is shared
-        // with browser_2d.html. The editor owns the clock and the microphone and
-        // pushes ctx down via postMessage; see the "CONNECT TO EDITOR" section below.
-
-        const vertexNoise = new Map();
+        // ============================================
+        // VERTEX NOISE (kept local — see FRP_CENTRALIZATION_PLAN.md's "vertex
+        // noise" note: this drifts a raw per-vertex Float32Array every frame,
+        // which doesn't reduce to a few scalar properties, so it's not worth
+        // routing through the editor. The editor only ever sends a single
+        // `noiseIntensity` number per object; this world still owns the actual
+        // per-frame drift, parameterized by that number and the ambient `t`
+        // that rides along in every applyOps message.)
+        // ============================================
+        const vertexNoise = new Map(); // native object -> { base: Float32Array, intensity }
         const NOISE_MAX_DRIFT = 0.4; // units of drift at intensity 1
         const NOISE_TIME = 0.8; // temporal speed of the field
         const NOISE_SCALE = 0.8; // spatial frequency of the field
@@ -128,102 +128,52 @@
             }
         }
 
+        // Sync one native object's noise-drift registration with its current
+        // noiseIntensity prop (0 = not drifting / snap back to original positions).
+        function syncNoise(mesh, intensity) {
+            if (!mesh.geometry || !mesh.geometry.attributes.position) return;
+            intensity = Math.max(0, Math.min(1, intensity || 0));
+
+            if (intensity === 0) {
+                const info = vertexNoise.get(mesh);
+                if (info) {
+                    mesh.geometry.attributes.position.array.set(info.base);
+                    mesh.geometry.attributes.position.needsUpdate = true;
+                    vertexNoise.delete(mesh);
+                }
+                return;
+            }
+
+            let info = vertexNoise.get(mesh);
+            if (!info) {
+                info = { base: mesh.geometry.attributes.position.array.slice(), intensity };
+                vertexNoise.set(mesh, info);
+            } else {
+                info.intensity = intensity;
+            }
+        }
+
         // Render once so the (empty) scene isn't a blank frame before the first tick.
         renderer.render(scene, camera);
 
         // ============================================
-        // INTERPRETER FUNCTIONS (called by eval)
+        // GENERIC {id, kind, props} APPLY-DISPATCHER
         // ============================================
-        /**
-         * Create a box mesh and add it to the scene.
-         * @param {number} sizex    edge length on X axis. Defaults to 1.0.
-         * @param {number} sizey    edge length on Y axis. Defaults to sizex.
-         * @param {number} sizez    edge length on Z axis. Defaults to sizex.
-         * @param {string} color    named color (ex: "red") or hex color code string. Defaults to "white".
-         * @param {number} x        X position. Defaults to 0.
-         * @param {number} y        Y position. Defaults to 0.
-         * @return {THREE.mesh}     the created cube mesh.
-        */
-        function cube(sizex = 1.0, sizey, sizez, color = "white", x = 0, y = 0) {
-            if (sizey === undefined) sizey = sizex;
-            if (sizez === undefined) sizez = sizex;
-
-            const geometry = new THREE.BoxGeometry(sizex, sizey, sizez);
-            const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.set(x, y, 0);
-            scene.add(mesh);
-            return mesh;
-        }
-
-        /**
-         * Create a sphere or ellipsoid.
-         *
-         * A string in any size slot is the color, and unfilled sizes default to radx for the uniform case.
-         *
-         * @param {number} radx   radius on X. Default 0.5.
-         * @param {number} rady   radius on Y. Defaults to radx.
-         * @param {number} radz   radius on Z. Defaults to radx.
-         * @param {string} color  named color or hex. Default "white".
-         * @param {number} x      X position. Defaults to 0.
-         * @param {number} y      Y position. Defaults to 0.
-         *
-        */
-        function sphere(radx = 0.5, rady, radz, color = "white", x = 0, y = 0) {
-            if (rady === undefined) rady = radx;
-            if (radz === undefined) radz = radx;
-
-            const geometry = new THREE.SphereGeometry(1, 32, 32);
-            geometry.scale(radx, rady, radz);   // bake ellipsoid into vertices
-            const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.set(x, y, 0);
-            scene.add(mesh);
-            return mesh;
-        }
-
-        /**
-         * Create a torus (donut shape).
-         * String shorthand: torus(0.6, "orange") -> outer 0.6, default tube, orange.
-         *
-         * @param {number} radx   outer ring radius (center of torus to center of tube). Default 0.5.
-         * @param {number} rady   tube radius (thickness of the ring). Default 0.25.
-         * @param {string} color  named color or hex. Default "white".
-         * @param {number} x      X position. Defaults to 0.
-         * @param {number} y      Y position. Defaults to 0.
-         *
-         */
-        function torus(radx = 0.5, rady = 0.25, color = "white", x = 0, y = 0) {
-            // TorusGeometry(outerRadius, tubeRadius, radialSegments, tubularSegments)
-            // 16/32 segments is a good smoothness/cost balance for typical sizes.
-            const geometry = new THREE.TorusGeometry(radx, rady, 16, 32);
-            const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.set(x, y, 0);
-            scene.add(mesh);
-            return mesh;
-        }
-
-        /**
-         * Create a tube: cylinder, cone, or truncated cone (frustum).
-         * 
-         * @param {number} rad1     top radius. Default 0.5.
-         * @param {number} rad2     bottom radius. Defaults to rad1.
-         * @param {number} height   height. Default 0.5.
-         * @param {string} color    named color or hex value. Default "white".
-         * @param {number} x      X position. Defaults to 0.
-         * @param {number} y      Y position. Defaults to 0.
-        */
-        function tube(rad1 = 0.5, rad2, height = 0.5, color = "white", x = 0, y = 0) {
-            if (rad2 === undefined) rad2 = rad1; // cylinder by default
-
-            const geometry = new THREE.CylinderGeometry(rad1, rad2, height, 32);
-            const material = new THREE.MeshPhongMaterial({ color: parseColor(color) });
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.set(x, y, 0);
-            scene.add(mesh);
-            return mesh;
-        }
+        // The editor (listener/listen2/editor.html) now owns the verb functions,
+        // the FRP engine, and a plain state store per world. Once per frame it
+        // posts the full current state of every live object for this world; this
+        // file's only job is to turn {id, kind, props} into native THREE objects
+        // and keep them in sync. It never evals script text.
+        //
+        // Rotation convention: props.rotation.{x,y,z} arrive already in RADIANS
+        // (converted at the editor level, in the same place the old rotate()'s
+        // deg->rad valueTransform used to run) — this world does zero conversion,
+        // it just assigns straight to mesh.rotation, exactly like 2D's rotation
+        // prop arrives already in Paper's native unit (degrees) and is assigned
+        // as-is.
+        //
+        // nativeCache: id -> { kind, mesh, forceTransparent }
+        const nativeCache = new Map();
 
         // Cached white circular sprite for rendering spherical cloud points.
         let _circleTexture = null;
@@ -231,377 +181,155 @@
             if (_circleTexture) return _circleTexture;
 
             const size = 64;
-            const canvas = document.createElement('canvas');
-            canvas.width = canvas.height = size;
-            const ctx = canvas.getContext('2d');
+            const c = document.createElement('canvas');
+            c.width = c.height = size;
+            const ctx = c.getContext('2d');
             ctx.beginPath();
             ctx.arc(size / 2, size / 2, size / 2 * 0.9, 0, Math.PI * 2);
             ctx.fillStyle = 'white';   // white so material.color tints it
             ctx.fill();
-            _circleTexture = new THREE.CanvasTexture(canvas);
+            _circleTexture = new THREE.CanvasTexture(c);
             return _circleTexture;
         }
 
-        /**
-         * Create a point cloud. Points are scattered with a Gaussian distribution (dense
-         * core, soft edges) and drawn via THREE.Points.
-         *
-         * @param {number} quantity   0..1, fraction of MAX_POINTS used. 1.0 = 100 points, 0.5 = 50.
-         * @param {number} spread    standard deviation of the scatter — larger is a wider, looser cloud.
-         *                           1.0 is a good visible default; 0.5 tighter, 2.0 wider.
-         * @param {string} color     named color or hex. Default "white".
-         * @param {string} shape     point shape: "circle" (default, round dot) or "square".
-         * @param {number} x      X position. Defaults to 0.
-         * @param {number} y      Y position. Defaults to 0.
-         *
-         * Returns a THREE.Points object.
-         *
-         */
-        function cloud(quantity = 1.0, spread = 1.0, color = "white", shape = "circle", x = 0, y = 0) {
-            // Box-Muller transform: a normally-distributed random number (mean 0, std dev 1).
-            // Used to scatter points with a dense core and wispy edges.
-            function gaussianRandom() {
-                let u = 0, v = 0;
-                while (u === 0) u = Math.random();  // avoid log(0)
-                while (v === 0) v = Math.random();
-                return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-            }
-
-            const MAX_POINTS = 150;
-            quantity = Math.max(0, Math.min(1, quantity));
-            const count = Math.max(4, Math.round(MAX_POINTS * quantity));
-
-            // Three coordinates per point, scattered by a Gaussian * spread.
-            const positions = new Float32Array(count * 3);
-            for (let i = 0; i < count; i++) {
-                positions[i * 3] = gaussianRandom() * spread;
-                positions[i * 3 + 1] = gaussianRandom() * spread;
-                positions[i * 3 + 2] = gaussianRandom() * spread;
-            }
-
-            const geometry = new THREE.BufferGeometry();
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-            const material = new THREE.PointsMaterial({
-                color: parseColor(color),
-                size: 0.1,               // world-unit point size; first thing to tune if too small/large
-                sizeAttenuation: true,   // points shrink with distance (depth cue)
-            });
-
-            if (shape != 'square') {
-                material.map = getCircleTexture();
-                material.alphaTest = 0.5; // discard corner fragments -> disc, with correct depth sorting
-                material.transparent = true;
-            }
-
-            const points = new THREE.Points(geometry, material);
-            points.position.set(x, y, 0);
-            scene.add(points);
-            return points;
+        // Box-Muller transform: a normally-distributed random number (mean 0, std dev 1).
+        // Used to scatter cloud points with a dense core and wispy edges.
+        function gaussianRandom() {
+            let u = 0, v = 0;
+            while (u === 0) u = Math.random();  // avoid log(0)
+            while (v === 0) v = Math.random();
+            return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
         }
 
-        /**
-         * Move a shape. Each axis arg can be:
-         * 1) a number => snap (duration = 0) or tween (duration > 0)
-         * 2) a string => compiled to a per-frame expression of t, ex: "t * 0.5"
-         * 3) a function (ctx) => value => evaluated per-frame, ex: (ctx) => ctx.t * 0.5
-         *    (ctx carries t, audioLevel, ...; see buildContext)
-         *
-         * Mixed args are allowed.
-         * Ex: move(b, "t * 0.5", 0, 0, 2) updates X axis via expression while Y and Z tween to 0 over 2 seconds.
-         * Ex: move(b, (ctx) => Math.sin(ctx.t), 0, 0) drives X with a function.
-         *
-         * @param {THREE.Object3D}          shape
-         * @param {number|string|function}  x         target X position
-         * @param {number|string|function}  y         target Y position
-         * @param {number|string|function}  z         target Z position
-         * @param {number}                  duration  seconds; applies to numeric args only. 0 (default) = instant.
-        */
-        function move(shape, x = 0.0, y = 0.0, z = 0.0, duration = 0) {
-            if (!shape) return;
-            applyTransform(shape, 'position', x, y, z, duration);
-        }
-
-        /**
-         * Rotate a shape. Angles are in degrees, converted to radians internally for Three.js.
-         * Conversion is applied to expression results, too, so "t * 60" means 60 deg/sec.
-         * 
-         * @param {THREE.Object3D}          shape
-         * @param {number|string|function}  rx        degrees around X (or "t"-expression, or (ctx)=>deg)
-         * @param {number|string|function}  ry        degrees around Y (or "t"-expression, or (ctx)=>deg)
-         * @param {number|string|function}  rz        degrees around Z (or "t"-expression, or (ctx)=>deg)
-         * @param {number}                  duration  seconds; applies to numeric args only. 0 (default) = instant.
-         * Examples:
-         *   rotate(b1, 0, 90, 0)            snap to 90 deg around Y
-         *   rotate(b1, 0, 90, 0, 1)         tween to 90 over 1 second
-         *   rotate(b1, 0, "t * 60", 0)      spin at 60 deg/sec around Y, forever
-         *   rotate(b1, 0, (ctx) => ctx.t * 60, 0)   same spin via a function
-        */
-        function rotate(shape, rx = 0.0, ry = 0.0, rz = 0.0, duration = 0) {
-            if (!shape) return;
-            const degToRad = (deg) => deg * Math.PI / 180;
-            applyTransform(shape, 'rotation', rx, ry, rz, duration, degToRad);
-        }
-
-        /**
-         * Scale a shape.
-         * 
-         * Shorthand: if sy or sz is undefined, it defaults to sx. So
-         *   scale(b1, 2)            -> uniform 2.0 on all three axes
-         *   scale(b1, "1 + 0.2 * Math.sin(t * 2)")  -> uniform pulse via expression
-         * To scale only one axis, pass 1 for the others explicitly:
-         *   scale(b1, 2, 1, 1)      -> stretch X only, leave Y/Z at 1.0
-         * 
-         * Note: calling scale(b1) with no other args resets to (1, 1, 1).
-         *
-         * @param {THREE.Object3D}          shape
-         * @param {number|string|function}  sx        scale factor on X (number, "t"-expression, or (ctx)=>value)
-         * @param {number|string|function}  sy        scale factor on Y (defaults to sx)
-         * @param {number|string|function}  sz        scale factor on Z (defaults to sx)
-         * @param {number}                  duration  seconds; applies to numeric args only. 0 (default) = instant.
-        */
-        function scale(shape, sx = 1.0, sy, sz, duration = 0) {
-            if (!shape) return;
-            if (sy === undefined) sy = sx;
-            if (sz === undefined) sz = sx;
-
-            // take over scale control and drop audioreactivity
-            audioBaseScale.delete(shape);
-
-            applyTransform(shape, 'scale', sx, sy, sz, duration);
-        }
-
-        /**
-         * Make shape(s) reactive to microphone audio.
-         * 
-         * Call on one or more shapes.
-         * Ex: audio_reactive(tu1, 0.8, 1.3)
-         * Ex: audio_reactive([t1, b2], 0.8, 1.3)
-         * 
-         * @param {THREE.Object3D|[THREE.Object3D]}     shape
-         * @param {number}                              low        Scale factor range low end.
-         * @param {number}                              high       Scale factor range high end.
-        */
-        function audio_reactive(shapes, low = 0.8, high = 1.0) {
-            const list = Array.isArray(shapes) ? shapes : [shapes]; // normalize to array
-
-            for (const shape of list) {
-                if (!shape) continue;
-
-                // Capture the pulse base.
-                // If the shape is already audio reactive, reuse the stored base so re-calling (ex: to change low/high)
-                // doesn't compound onto a mid-pulse value.
-                let base = audioBaseScale.get(shape);
-                if (!base) {
-                    base = shape.scale.clone();
-                    audioBaseScale.set(shape, base);
+        // Kind-specific construction. `cloud`'s point scatter is randomly
+        // generated once, here, from the small (quantity, spread, pointShape)
+        // props — like vertex noise, the actual per-point Float32Array is a
+        // native, largish, effectively-static data blob that isn't worth
+        // shipping from the editor every frame; only the scalar knobs are.
+        function constructNative(kind, props, cache) {
+            switch (kind) {
+                case 'cube': {
+                    const geometry = new THREE.BoxGeometry(props.size.x, props.size.y, props.size.z);
+                    const material = new THREE.MeshPhongMaterial();
+                    return new THREE.Mesh(geometry, material);
                 }
-
-                // One audio factor drives all three axes (uniform pulse).
-                for (const axis of ['x', 'y', 'z']) {
-                    const b = base[axis];
-                    registerDynamic(shape, `scale.${axis}`, (ctx) => b * (low + (high - low) * ctx.audioLevel))
+                case 'sphere': {
+                    const geometry = new THREE.SphereGeometry(1, 32, 32);
+                    geometry.scale(props.radius.x, props.radius.y, props.radius.z);
+                    const material = new THREE.MeshPhongMaterial();
+                    return new THREE.Mesh(geometry, material);
                 }
+                case 'torus': {
+                    // TorusGeometry(outerRadius, tubeRadius, radialSegments, tubularSegments)
+                    const geometry = new THREE.TorusGeometry(props.radius.outer, props.radius.tube, 16, 32);
+                    const material = new THREE.MeshPhongMaterial();
+                    return new THREE.Mesh(geometry, material);
+                }
+                case 'tube': {
+                    const geometry = new THREE.CylinderGeometry(props.radius.top, props.radius.bottom, props.height, 32);
+                    const material = new THREE.MeshPhongMaterial();
+                    return new THREE.Mesh(geometry, material);
+                }
+                case 'cloud': {
+                    const MAX_POINTS = 150;
+                    const quantity = Math.max(0, Math.min(1, props.quantity));
+                    const count = Math.max(4, Math.round(MAX_POINTS * quantity));
+
+                    const positions = new Float32Array(count * 3);
+                    for (let i = 0; i < count; i++) {
+                        positions[i * 3] = gaussianRandom() * props.spread;
+                        positions[i * 3 + 1] = gaussianRandom() * props.spread;
+                        positions[i * 3 + 2] = gaussianRandom() * props.spread;
+                    }
+
+                    const geometry = new THREE.BufferGeometry();
+                    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+                    const material = new THREE.PointsMaterial({
+                        size: 0.1,               // world-unit point size; first thing to tune if too small/large
+                        sizeAttenuation: true,   // points shrink with distance (depth cue)
+                    });
+
+                    let forceTransparent = false;
+                    if (props.pointShape !== 'square') {
+                        material.map = getCircleTexture();
+                        material.alphaTest = 0.5; // discard corner fragments -> disc, with correct depth sorting
+                        material.transparent = true;
+                        forceTransparent = true; // independent of the opacity()-driven transparent flag
+                    }
+                    cache.forceTransparent = forceTransparent;
+                    return new THREE.Points(geometry, material);
+                }
+                default:
+                    console.error('applyOps: unknown 3D kind:', kind);
+                    return null;
             }
         }
 
-        /**
-         * Give a shape organic movement by drifting each of its vertices with a noise field.
-         * Works on any shape with a position attribute.
-         * Point clouds scatter, meshes ripple and wobble.
-         * 
-         * Examples:
-         * noise(shape)         default intensity 0.5
-         * noise(shape, 0.2)    subtle
-         * noise(shape, 1.0)    lively
-         * noise(shape, 0)      stop and snap back to the original positions
-         * 
-         * @param {THREE.Object3D}  shape
-         * @param {number}          intensity   0..1 drift amount. Default 0.5.
-         */
-        function noise(shape, intensity = 0.5) {
-            if (!shape || !shape.geometry || !shape.geometry.attributes.position) return;
-            intensity = Math.max(0, Math.min(1, intensity));
+        function applyProps(mesh, props, cache) {
+            mesh.position.set(props.position.x, props.position.y, props.position.z);
+            mesh.rotation.set(props.rotation.x, props.rotation.y, props.rotation.z);
+            mesh.scale.set(props.scale.x, props.scale.y, props.scale.z);
 
-            if (intensity === 0) {
-                // restore the base positions
-                const info = vertexNoise.get(shape);
-                if (info) {
-                    shape.geometry.attributes.position.array.set(info.base);
-                    shape.geometry.attributes.position.needsUpdate = true;
-                    vertexNoise.delete(shape);
-                }
-                return;
-            }
-
-            // store original positions once and reuse them on re-calls
-            // (changing intensity never captures an already-drifted frame as base)
-            let info = vertexNoise.get(shape);
-            if (!info) {
-                info = { base: shape.geometry.attributes.position.array.slice(), intensity };
-                vertexNoise.set(shape, info);
-            } else {
-                info.intensity = intensity;
-            }
-        }
-
-        /**
-         * Recolor a shape.
-         * 
-         * @param {THREE.Object3D}  shape
-         * @param {string}          color       named color or hex value.
-         * @param {number}          duration    seconds; 0 (default) = instant.
-        */
-        function color(shape, color, duration = 0) {
-            if (!shape || !shape.material) return;
-            const resolved = parseColor(color);
-
-            // stop any existing tweens
-            unregisterDynamic(shape, 'material.color.r');
-            unregisterDynamic(shape, 'material.color.g');
-            unregisterDynamic(shape, 'material.color.b');
-
-            if (duration > 0 && shape.material.color) {
-                const target = new THREE.Color(resolved);
-                registerTween(shape, 'material.color.r', target.r, duration);
-                registerTween(shape, 'material.color.g', target.g, duration);
-                registerTween(shape, 'material.color.b', target.b, duration);
-            } else {
-                const mats = Array.isArray(shape.material) ? shape.material : [shape.material];
-                for (const m of mats) {
-                    if (m.color) m.color.set(resolved);
-                }
-            }
-        }
-
-        /**
-         * Set a shape's opacity (0 = invisible, 1 = opaque).
-         * 
-         * @param {THREE.Object3D}      shape
-         * @param {number|string|function} value    0->1, a "t"-expression, or (ctx)=>value. Default 1.0.
-         * @param {number}              duration    seconds; numeric value only. 0 (default) = instant.
-        */
-        function opacity(shape, value = 1.0, duration = 0) {
-            if (!shape || !shape.material) return;
-            const mats = Array.isArray(shape.material) ? shape.material : [shape.material];
-            const path = 'material.opacity';
-
-            const setTransparent = (m, on) => {
-                if (m.transparent !== on) {
-                    m.transparent = on;
+            const wantTransparent = !!props.transparent || !!cache.forceTransparent;
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            for (const m of mats) {
+                if (m.color && props.color) m.color.setRGB(props.color.r, props.color.g, props.color.b);
+                m.opacity = props.opacity;
+                if (m.transparent !== wantTransparent) {
+                    m.transparent = wantTransparent;
                     m.needsUpdate = true;
                 }
             }
 
-            if (typeof value === 'string' || typeof value === 'function') {
-                // expression/function -> per-frame opacity, e.g. "0.5 + 0.5 * Math.sin(t)"
-                // or (ctx) => 0.5 + 0.5 * Math.sin(ctx.t). It can dip below 1 at any time,
-                // so blending must stay on.
-                for (const m of mats) setTransparent(m, true);
-                registerDynamic(shape, path, toDynamicFn(value));
-                return;
-            }
+            syncNoise(mesh, props.noiseIntensity);
+        }
 
-            // numeric: stop any running fade/expression first so it can't keep writing the property next frame.
-            unregisterDynamic(shape, path);
-            if (duration > 0) {
-                for (const m of mats) setTransparent(m, true);   // dips below 1 mid-fade
-                registerTween(shape, path, value, duration);
-            } else {
-                for (const m of mats) {
-                    m.opacity = value;
-                    setTransparent(m, value < 1);   // only blend when not fully opaque
-                }
+        function disposeNative(mesh) {
+            scene.remove(mesh);
+            vertexNoise.delete(mesh);
+            if (mesh.geometry) mesh.geometry.dispose();
+            if (mesh.material) {
+                const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+                for (const m of mats) m.dispose();
             }
         }
 
-        /**
-         * Remove the specified shape from the scene.
-         * 
-         * @param {THREE.Object3D} shape
-        */
-        function remove(shape) {
-            if (!shape) return;
-
-            dynamicProps.delete(shape); // remove any active tweens/expressions
-
-            scene.remove(shape); // remove from scene
-
-            // dispose of geometry and materials
-            if (shape.geometry) shape.geometry.dispose();
-            if (shape.material) {
-                // a mesh may carry an array of materials; handle both cases.
-                if (Array.isArray(shape.material)) {
-                    for (const m of shape.material) m.dispose();
-                } else {
-                    shape.material.dispose();
-                }
+        function applyOp({ id, kind, props }) {
+            let cache = nativeCache.get(id);
+            if (cache && cache.kind !== kind) {
+                // Not expected in Phase 1 (nothing recreates ids yet) — handle
+                // defensively by destroying and reconstructing.
+                disposeNative(cache.mesh);
+                nativeCache.delete(id);
+                cache = null;
             }
+            if (!cache) {
+                cache = { kind, mesh: null, forceTransparent: false };
+                const mesh = constructNative(kind, props, cache);
+                if (!mesh) return;
+                cache.mesh = mesh;
+                scene.add(mesh);
+                nativeCache.set(id, cache);
+            }
+            applyProps(cache.mesh, props, cache);
         }
 
-        /**
-         * Remove all shapes from the scene. Lights and camera are preserved.
-        */
-        function clear() {
-            dynamicProps.clear(); // stop every tween/expression
-
-            const toRemove = scene.children.filter(
-                child => child.isMesh || child.isPoints
-            )
-
-            for (const child of toRemove) {
-                scene.remove(child);
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) {
-                    // a mesh may carry an array of materials; handle both cases.
-                    if (Array.isArray(child.material)) {
-                        for (const m of child.material) m.dispose();
-                    } else {
-                        child.material.dispose();
-                    }
-                }
-            }
+        function destroyNative(id) {
+            const cache = nativeCache.get(id);
+            if (!cache) return;
+            disposeNative(cache.mesh);
+            nativeCache.delete(id);
         }
-
-        // ============================================
-        // MAKE FUNCTIONS GLOBALLY ACCESSIBLE
-        // ============================================
-        // Exposed on window so eval'd commands (which run in global scope) can call them.
-        // THREE is exposed so a command can reach for raw Three.js when a helper doesn't cover what it needs.
-        window.THREE = THREE;
-        window.scene = scene;
-        window.camera = camera;
-        window.renderer = renderer;
-        window.cube = cube;
-        window.sphere = sphere;
-        window.torus = torus;
-        window.tube = tube;
-        window.cloud = cloud;
-        window.move = move;
-        window.rotate = rotate;
-        window.scale = scale;
-        window.audio_reactive = audio_reactive;
-        window.noise = noise;
-        window.color = color;
-        window.opacity = opacity;
-        window.remove = remove;
-        window.clear = clear;
 
         // ============================================
         // CONNECT TO EDITOR
         // ============================================
-
         connectToEditor({
-            onExecute: (code) => {
-                debug('Executing: ' + code);
-                console.log('>>> EVAL:', code);
-                executeCommand(code, {
-                    onError: (e) => debug('Error: ' + e.message),
-                });
-            },
-            onTick: (ctx) => {
-                applyTick(ctx);            // advance every registered dynamic
-                updateVertexNoise(ctx.t);  // drift shape vertices
+            onApplyOps: ({ t, ops, removed }) => {
+                for (const id of removed) destroyNative(id);
+                for (const op of ops) applyOp(op);
+                updateVertexNoise(t);      // drift shape vertices (2nd pass, after props applied)
                 renderer.render(scene, camera);
             },
         });

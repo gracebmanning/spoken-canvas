@@ -6,11 +6,7 @@
     <title>Browser 2D Interpreter</title>
     <!-- Paper.js for vector graphics -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.17/paper-full.min.js"></script>
-    <!-- Shared color palette (defines COLOR_MAP and parseColor globally) -->
-    <script src="colors.js"></script>
-    <!-- Shared scene-graph animation engine (dynamicProps, tween, applyTick, ...) -->
-    <script src="frp.js"></script>
-    <!-- Shared interpreter plumbing (executeCommand + connectToEditor) -->
+    <!-- Shared interpreter plumbing (connectToEditor's applyOps listener) -->
     <script src="interpreter_core.js"></script>
     <style>
         body {
@@ -71,327 +67,128 @@
         paper.settings.applyMatrix = false;
 
         // Convenient aliases
-        const { view, Path, Point, Size } = paper;
-        const center = view.center;
-
-        // The scene-graph animation engine (dynamicProps, registerDynamic, tween,
-        // dynamicSize/dynamicColor/dynamicProp, applyTick, ...) lives in frp.js and is
-        // shared with browser_3d.html. The editor owns the clock and the microphone and
-        // pushes ctx down via postMessage; see the "CONNECT TO EDITOR" section below,
-        // which calls applyTick(ctx) and redraws once per tick.
+        const { view, Path, Point } = paper;
 
         // ============================================
-        // INTERPRETER FUNCTIONS (called by eval)
+        // GENERIC {id, kind, props} APPLY-DISPATCHER
         // ============================================
-        // Any size arg (radius/width/height) may be a number, a "t"-expression string,
-        // or a (ctx)=>value function; a dynamic one makes the shape grow/shrink over time.
-        // Ex: circle((c) => 50 + c.t, "red")   // radius grows 1 unit/sec
-        function circle(radius, color, x = center.x, y = center.y) {
-            const r = dynamicSize(radius, 'scaling', ['x', 'y']);
-            const col = dynamicColor(color);
-            const path = new Path.Circle({
-                center: [x, y],
-                radius: r.base,
-                fillColor: parseColor(col.base)
-            });
-            r.register(path);
-            col.register(path);
-            console.log('Created circle:', path);
-            return path;
-        }
+        // The editor (listener/listen2/editor.html) now owns the verb functions,
+        // the FRP engine, and a plain state store per world. Once per frame it
+        // posts the full current state of every live object for this world; this
+        // file's only job is to turn {id, kind, props} into native Paper.js
+        // objects and keep them in sync. It never evals script text.
+        //
+        // nativeCache: id -> { kind, item }
+        const nativeCache = new Map();
 
-        function square(size, color, x = center.x, y = center.y) {
-            const s = dynamicSize(size, 'scaling', ['x', 'y']);
-            const col = dynamicColor(color);
-            const path = new Path.Rectangle({
-                center: [x, y],
-                size: [s.base, s.base],
-                fillColor: parseColor(col.base)
-            });
-            s.register(path);
-            col.register(path);
-            console.log('Created square:', path);
-            return path;
-        }
-
-        function rect(width, height, color, x = center.x, y = center.y) {
-            const w = dynamicSize(width, 'scaling', ['x']);
-            const h = dynamicSize(height, 'scaling', ['y']);
-            const col = dynamicColor(color);
-            const path = new Path.Rectangle({
-                center: [x, y],
-                size: [w.base, h.base],
-                fillColor: parseColor(col.base)
-            });
-            w.register(path);
-            h.register(path);
-            col.register(path);
-            return path;
-        }
-
-        function ellipse(width, height, color, x = center.x, y = center.y) {
-            const w = dynamicSize(width, 'scaling', ['x']);
-            const h = dynamicSize(height, 'scaling', ['y']);
-            const col = dynamicColor(color);
-            const path = new Path.Ellipse({
-                center: [x, y],
-                size: [w.base, h.base],
-                fillColor: parseColor(col.base)
-            });
-            w.register(path);
-            h.register(path);
-            col.register(path);
-            return path;
-        }
-
-        // Create an arrow from point A to point B
-        function arrow(fromX, fromY, toX, toY, color = 'black', thickness = 3) {
-            const group = new paper.Group();
-            const col = dynamicColor(color, 'strokeColor');   // a Group's strokeColor propagates to children
-
-            // Main line
-            const line = new Path.Line({
-                from: [fromX, fromY],
-                to: [toX, toY],
-                strokeColor: parseColor(col.base),
-                strokeWidth: thickness
-            });
-            group.addChild(line);
-
-            // Calculate arrowhead
-            const dx = toX - fromX;
-            const dy = toY - fromY;
-            const angle = Math.atan2(dy, dx);
-            const arrowLength = 15;
-            const arrowAngle = Math.PI / 6; // 30 degrees
-
-            // Arrowhead point 1
-            const arrow1 = new Path.Line({
-                from: [toX, toY],
-                to: [
-                    toX - arrowLength * Math.cos(angle - arrowAngle),
-                    toY - arrowLength * Math.sin(angle - arrowAngle)
-                ],
-                strokeColor: parseColor(col.base),
-                strokeWidth: thickness
-            });
-            group.addChild(arrow1);
-
-            // Arrowhead point 2
-            const arrow2 = new Path.Line({
-                from: [toX, toY],
-                to: [
-                    toX - arrowLength * Math.cos(angle + arrowAngle),
-                    toY - arrowLength * Math.sin(angle + arrowAngle)
-                ],
-                strokeColor: parseColor(col.base),
-                strokeWidth: thickness
-            });
-            group.addChild(arrow2);
-
-            col.register(group);
-            console.log('Created arrow:', group);
-            return group;
-        }
-
-        function line(fromX, fromY, toX, toY, color = 'white', thickness = 3) {
-            const col = dynamicColor(color, 'strokeColor');
-            const path = new Path.Line({
-                from: [fromX, fromY],
-                to: [toX, toY],
-                strokeColor: parseColor(col.base),
-                strokeWidth: thickness
-            });
-            col.register(path);
-            console.log('Created line:', path);
-            return path;
-        }
-
-        // Create text at a position
-        // content may be a literal (number/string) or a (ctx)=>value function for live text.
-        // Ex: text((c) => "Time: " + c.t.toFixed(1), 400, 270, 100, "cyan")
-        function text(content, x = center.x, y = center.y, size = 24, color = 'white') {
-            const txt = dynamicProp(content, 'content', String);
-            const col = dynamicColor(color);
-            const textItem = new paper.PointText({
-                point: [x, y],
-                content: String(txt.base),
-                fillColor: parseColor(col.base),
-                fontSize: size,
-                fontFamily: 'Arial, sans-serif',
-                justification: 'center'
-            });
-            txt.register(textItem);
-            col.register(textItem);
-            console.log('Created text:', textItem);
-            return textItem;
-        }
-
-        // Create a box (rectangle with border, no fill) - useful for diagrams
-        function box(width, height, color = 'white', x = center.x, y = center.y, borderWidth = 2) {
-            const w = dynamicSize(width, 'scaling', ['x']);
-            const h = dynamicSize(height, 'scaling', ['y']);
-            const col = dynamicColor(color, 'strokeColor');
-            const path = new Path.Rectangle({
-                center: [x, y],
-                size: [w.base, h.base],
-                strokeColor: parseColor(col.base),
-                strokeWidth: borderWidth,
-                fillColor: null
-            });
-            w.register(path);
-            h.register(path);
-            col.register(path);
-            return path;
-        }
-
-        /**
-         * Move an item. Each of x/y can be a number (snap or tween), a "t"-expression
-         * string, or a (ctx)=>value function. Mixed args allowed.
-         * Ex: move(c, "center.x + 200 * Math.sin(t)", center.y)
-         *
-         * @param {paper.Item}             obj
-         * @param {number|string|function} x         target X (or expression / (ctx)=>value)
-         * @param {number|string|function} y         target Y
-         * @param {number}                 duration  seconds; numeric args only. 0 (default) = instant.
-         */
-        function move(obj, x = center.x, y = center.y, duration = 0) {
-            if (!obj) return;
-            applyDynamic(obj, 'position.x', x, duration);
-            applyDynamic(obj, 'position.y', y, duration);
-        }
-
-        /**
-         * Rotate an item to an ABSOLUTE angle in degrees (matches browser_3d).
-         * Number => snap/tween; string/function => continuous, e.g. "t * 60" spins 60 deg/sec.
-         *
-         * @param {paper.Item}             obj
-         * @param {number|string|function} degrees   absolute angle (or expression / (ctx)=>deg)
-         * @param {number}                 duration  seconds; numeric only. 0 (default) = instant.
-         */
-        function rotate(obj, degrees = 0, duration = 0) {
-            if (!obj) return;
-            applyDynamic(obj, 'rotation', degrees, duration);
-        }
-
-        /**
-         * Scale an item by an ABSOLUTE factor (1 = original size). sy defaults to sx.
-         * Number => snap/tween; string/function => continuous pulse, e.g. "1 + 0.2 * Math.sin(t * 2)".
-         *
-         * @param {paper.Item}             obj
-         * @param {number|string|function} sx        X scale factor (or expression / (ctx)=>value)
-         * @param {number|string|function} sy        Y scale factor (defaults to sx)
-         * @param {number}                 duration  seconds; numeric only. 0 (default) = instant.
-         */
-        function scale(obj, sx = 1.0, sy, duration = 0) {
-            if (!obj) return;
-            if (sy === undefined) sy = sx;
-            audioBaseScale.delete(obj);   // take over scale control, drop audio reactivity
-            applyDynamic(obj, 'scaling.x', sx, duration);
-            applyDynamic(obj, 'scaling.y', sy, duration);
-        }
-
-        /**
-         * Set an item's opacity (0 = invisible, 1 = opaque).
-         * Number => snap/tween; string/function => continuous, e.g. "0.5 + 0.5 * Math.sin(t)".
-         *
-         * @param {paper.Item}             obj
-         * @param {number|string|function} value     0..1 (or expression / (ctx)=>value)
-         * @param {number}                 duration  seconds; numeric only. 0 (default) = instant.
-         */
-        function fade(obj, value = 1.0, duration = 0) {
-            if (!obj) return;
-            applyDynamic(obj, 'opacity', value, duration);
-        }
-
-        /**
-         * Make item(s) reactive to microphone audio (uniform scale pulse).
-         * Ex: audio_reactive(c1, 0.8, 1.3) or audio_reactive([c1, c2], 0.8, 1.3)
-         *
-         * @param {paper.Item|paper.Item[]} shapes
-         * @param {number}                  low    scale factor at silence
-         * @param {number}                  high   scale factor at full loudness
-         */
-        function audio_reactive(shapes, low = 0.8, high = 1.0) {
-            const list = Array.isArray(shapes) ? shapes : [shapes];
-            for (const shape of list) {
-                if (!shape) continue;
-
-                // Capture (or reuse) the pulse base so re-calling doesn't compound.
-                let base = audioBaseScale.get(shape);
-                if (!base) {
-                    base = shape.scaling.clone();
-                    audioBaseScale.set(shape, base);
+        // Kind-specific geometry construction. Only the shape itself; generic
+        // Item properties (position/rotation/scaling/opacity/fillColor/
+        // strokeColor) are applied uniformly afterward in applyCommonProps.
+        function constructNative(kind, props) {
+            switch (kind) {
+                case 'circle':
+                    return new Path.Circle({
+                        center: [props.position.x, props.position.y],
+                        radius: props.radius,
+                    });
+                case 'square':
+                case 'rect':
+                    return new Path.Rectangle({
+                        center: [props.position.x, props.position.y],
+                        size: [props.size.width, props.size.height],
+                    });
+                case 'ellipse':
+                    return new Path.Ellipse({
+                        center: [props.position.x, props.position.y],
+                        size: [props.size.width, props.size.height],
+                    });
+                case 'box':
+                    return new Path.Rectangle({
+                        center: [props.position.x, props.position.y],
+                        size: [props.size.width, props.size.height],
+                    });
+                case 'line':
+                    return new Path.Line({
+                        from: [props.from.x, props.from.y],
+                        to: [props.to.x, props.to.y],
+                    });
+                case 'arrow': {
+                    const group = new paper.Group();
+                    for (const seg of props.lines) {
+                        group.addChild(new Path.Line({
+                            from: [seg.from.x, seg.from.y],
+                            to: [seg.to.x, seg.to.y],
+                        }));
+                    }
+                    return group;
                 }
-
-                // One audio factor drives both axes (uniform pulse).
-                for (const axis of ['x', 'y']) {
-                    const b = base[axis];
-                    registerDynamic(shape, `scaling.${axis}`, (ctx) => b * (low + (high - low) * ctx.audioLevel));
-                }
+                case 'text':
+                    return new paper.PointText({
+                        point: [props.position.x, props.position.y],
+                        justification: 'center',
+                        fontFamily: 'Arial, sans-serif',
+                    });
+                default:
+                    console.error('applyOps: unknown 2D kind:', kind);
+                    return null;
             }
         }
 
-        // Remove object
-        function remove(obj) {
-            if (!obj) return;
-            dynamicProps.delete(obj);   // stop any active tweens/expressions
-            if (obj.remove) obj.remove();
+        // Apply the current props to an existing native item. Kind-specific
+        // settable fields first, then the generic Item properties every kind
+        // shares (position/rotation/scaling/opacity/fillColor/strokeColor).
+        function applyProps(kind, item, props) {
+            if (kind === 'text') {
+                item.content = String(props.content);
+                item.fontSize = props.fontSize;
+            }
+            if (kind === 'line' || kind === 'arrow' || kind === 'box') {
+                item.strokeWidth = props.strokeWidth;
+            }
+
+            if (props.position) item.position = new Point(props.position.x, props.position.y);
+            if (props.scaling) item.scaling = new Point(props.scaling.x, props.scaling.y);
+            if (typeof props.rotation === 'number') item.rotation = props.rotation;
+            if (typeof props.opacity === 'number') item.opacity = props.opacity;
+            // fillColor/strokeColor are resolved to hex once in the editor (colors.js
+            // lives there now); we just assign the string. `null` is a valid value
+            // (box's fill), so check for undefined rather than falsiness.
+            if (props.fillColor !== undefined) item.fillColor = props.fillColor;
+            if (props.strokeColor !== undefined) item.strokeColor = props.strokeColor;
         }
 
-        // Clear all
-        function clear() {
-            dynamicProps.clear();       // stop every tween/expression
-            paper.project.activeLayer.removeChildren();
-            view.draw();
-            console.log('Cleared all objects');
+        function applyOp({ id, kind, props }) {
+            let cache = nativeCache.get(id);
+            if (cache && cache.kind !== kind) {
+                // Not expected in Phase 1 (nothing recreates ids yet) — handle
+                // defensively by destroying and reconstructing.
+                cache.item.remove();
+                nativeCache.delete(id);
+                cache = null;
+            }
+            if (!cache) {
+                const item = constructNative(kind, props);
+                if (!item) return;
+                cache = { kind, item };
+                nativeCache.set(id, cache);
+            }
+            applyProps(kind, cache.item, props);
         }
 
-        // ============================================
-        // MAKE FUNCTIONS GLOBALLY ACCESSIBLE
-        // ============================================
-
-        // Expose functions to global scope for eval()
-        window.circle = circle;
-        window.square = square;
-        window.rect = rect;
-        window.ellipse = ellipse;
-        window.arrow = arrow;
-        window.line = line;
-        window.text = text;
-        window.box = box;
-        window.scale = scale;
-        window.move = move;
-        window.rotate = rotate;
-        window.fade = fade;
-        window.opacity = fade;   // alias, matches browser_3d's opacity()
-        window.audio_reactive = audio_reactive;
-        window.remove = remove;
-        window.clear = clear;
-
-        // Also expose Paper.js objects for direct manipulation
-        window.paper = paper;
-        window.Path = Path;
-        window.Point = Point;
-        window.Size = Size;
-        window.view = view;
-        window.center = center;
+        function destroyNative(id) {
+            const cache = nativeCache.get(id);
+            if (!cache) return;
+            cache.item.remove();
+            nativeCache.delete(id);
+        }
 
         // ============================================
         // CONNECT TO EDITOR
         // ============================================
-
         connectToEditor({
-            onExecute: (code) => {
-                debug('Executing: ' + code);
-                console.log('>>> EVAL:', code);
-                executeCommand(code, {
-                    afterExecute: () => view.draw(),   // force Paper.js to render the change
-                    onError: (e) => debug('Error: ' + e.message),
-                });
-            },
-            onTick: (ctx) => {
-                applyTick(ctx);   // advance every registered dynamic
+            onApplyOps: ({ t, ops, removed }) => {
+                for (const id of removed) destroyNative(id);
+                for (const op of ops) applyOp(op);
                 view.draw();
             },
         });
