@@ -1,23 +1,25 @@
 
 Let's play with text:
-  [let t = text((c)=>("Time: " + c.t.toFixed(1)), 400, 270, 100, "cyan")]
+  [let t = browser_2d.text("Time: " + TIME.t.toFixed(1), 400, 270, 100, "cyan")]
 
-  [text((c)=>("Mic: " + c.audioLevel.toFixed(1)), 400, 370, 100, "red")]
+  [browser_2d.text("Mic: " + MIC.audio_level.toFixed(1), 400, 370, 100, "red")]
 
-  [let x = (c)=>(10*c.audioLevel)]
+  [let x = () => (10 * MIC.audio_level)]
 
-  [text((c)=>("Mic*10: " + x(c).toFixed(1)), 400, 470, 100, "yellow")]
+  [browser_2d.text("Mic*10: " + x().toFixed(1), 400, 470, 100, "yellow")]
 
-Let's begin with a circle. 
-  [let c1 = circle((c) => 50 * c.audioLevel + c.t, (c) => c.t < 10 ? "lime" : "red")]
+  [browser_2d.text("Words completed: " + SCRIPT.words_completed(), 400, 570, 100, "lightgreen")]
 
-A cube appears. 
- [browser_3d: let block = cube(1.2, 1.2, 1.2, "gray")] [browser_3d: rotate(block, 
-                     (c)=>c.t*c.audioLevel, 
-                    "t * 20", 
+Let's begin with a circle.
+  [let c1 = browser_2d.circle(() => 50 * MIC.audio_level + TIME.t, TIME.t < 10 ? "lime" : "red")]
+
+A cube appears.
+ [let block = browser_3d.cube(1.2, 1.2, 1.2, "gray")] [browser_3d.rotate(block,
+                    TIME.t * MIC.audio_level,
+                    TIME.t * 20,
                     0)]
 
-Let's begin with a circle. [browser_2d: let c1 = circle(50, "red")]
+Let's begin with a circle. [let c1 = browser_2d.circle(50, "red")]
 
-Now another. [browser_2d: let c1 = circle(50, "green")]
+Now another. [let c1 = browser_2d.circle(50, "green")]
 

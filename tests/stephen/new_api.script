@@ -1,0 +1,36 @@
+
+We start with a cube. This bracket just keeps confirming it's still there —
+cheap, and it never duplicates.
+  [let block = browser_3d.cube(1.2, 1.2, 1.2, "gray")]
+
+It spins forever, using the shared TIME namespace directly. No wrapper needed
+here — the whole bracket already re-runs every tick.
+  [browser_3d.rotate(block, TIME.t * 15, TIME.t * 20, 0)]
+
+Here's a circle that keeps growing on its own too. This one DOES need a
+wrapper function, specifically on the radius: Paper.js can't resize a circle
+after it's built, so a plain number here would only ever set the fixed
+starting size — wrapping it is what reaches the mechanism that keeps the
+growth going.
+  [let c1 = browser_2d.circle(() => 50 + TIME.t, "red")]
+
+This next shape swaps from a circle to a square at ten seconds, in the very
+same slot, with nothing left behind.
+  [let maker = (TIME.t > 10 ? browser_2d.square : browser_2d.circle); let shape = maker(80, "lime", 400, 400)]
+
+Watch this one ease between two spots every five seconds — it only restarts
+the ease when the target actually changes, not every frame.
+  [browser_2d.move(c1, (Math.floor(TIME.t / 5) % 2 === 0 ? 200 : 700), 300, 1)]
+
+One bracket, both worlds at once: a new circle appears here, while the cube's
+opacity pulses over there.
+  [let flash = browser_2d.circle(30, "cyan", 900, 900); browser_3d.opacity(block, 0.5 + 0.5 * Math.sin(TIME.t * 3))]
+
+Both worlds react to the microphone — this only needs to run once, since it
+manages its own ongoing pulse from here.
+  [!browser_2d.audio_reactive(c1, 0.8, 1.3)] [!browser_3d.audio_reactive(block, 0.8, 1.3)]
+
+That's everything. Clean slate — a one-time action, not something to leave
+running.
+  [!browser_2d.clear(); browser_3d.clear()]
+
