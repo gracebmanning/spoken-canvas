@@ -20,36 +20,14 @@
             display: block;
             background: transparent;
         }
-
-        #debug {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            color: red;
-            font-family: monospace;
-            font-size: 14px;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px;
-            display: block;
-            z-index: 1000;
-        }
-
     </style>
 </head>
 
 <body>
     <canvas id="canvas"></canvas>
-    <div id="debug">Connecting...</div>
 
     <script>
         const debugEl = document.getElementById('debug');
-
-        function debug(msg) {
-            console.log(msg);
-            debugEl.textContent = msg;
-        }
-
-        debug('Browser 2D Interpreter starting...');
 
         // ============================================
         // PAPER.JS SETUP
@@ -221,8 +199,6 @@
         });
 
         console.log('Paper.js initialized, view size:', view.size);
-        debug('Ready');
-
     </script>
 </body>
 

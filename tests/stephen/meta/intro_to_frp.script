@@ -1,0 +1,15 @@
+
+Let's talk about Functional
+
+  [browser_2d.box(300, 150, "green", 500 + 150, 75, 3)]
+  [browser_2d.text("Functional", 500 + 150, 75, 24, "green", "center")]
+
+Reactive
+
+  [browser_2d.box(300, 150, "red", 500 + 3*2 + 150 + 300, 75, 3)]
+  [browser_2d.text("Reactive", 500 + 3*2 + 150 + 300, 75, 24, "red", "center")]
+
+Programming.
+
+  [browser_2d.box(300, 150, "yellow", 500 + 3*4 + 150 + 300*2, 75, 3)]
+  [browser_2d.text("Programming!!!", 500 + 3*4 + 150 + 300*2, 75, 24, "yellow", "center")]

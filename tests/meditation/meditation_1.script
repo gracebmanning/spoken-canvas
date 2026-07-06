@@ -1,7 +1,7 @@
 Let's take a few minutes to wind down.
-Go ahead and find a comfortable position and soften your shoulders. [browser_3d: let cl1 = cloud(1.0, 0.5, "white")]
-Focus on this point cloud as it rotates. [browser_3d: rotate(cl1, 0, "t*30", 0)]
-Now take a deep breath for 5 seconds. [browser_3d: scale(cl1, 2.5, 2.5, 2.5, 5)]
+Go ahead and find a comfortable position and soften your shoulders. [let cl1 = browser_3d.cloud(1.0, 0.5, "white")]
+Focus on this point cloud as it rotates. [browser_3d.rotate(cl1, 0, TIME.t * 30, 0)]
+Now take a deep breath for 5 seconds. [!browser_3d.scale(cl1, 2.5, 2.5, 2.5, 5)]
 Hold for 3 seconds.
-And release for 5 seconds. [browser_3d: scale(cl1, 1, 1, 1, 5)]
+And release for 5 seconds. [!browser_3d.scale(cl1, 1, 1, 1, 5)]
 The end.

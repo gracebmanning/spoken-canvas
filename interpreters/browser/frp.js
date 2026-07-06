@@ -4,8 +4,7 @@
  * ONLY in the editor (listener/listen2/editor.html) — the interpreter worlds
  * (browser_2d.html/browser_3d.html) no longer load it at all.
  *
- * Phase 2 (see listener/FRP_PHASE2_PLAN.md) removed the old per-frame ctx-
- * object convention entirely. `TIME` and `MIC` below are persistent, mutable
+ * `TIME` and `MIC` below are persistent, mutable
  * objects — the SAME object every tick, mutated in place by editor.html's
  * tick() — so any closure that captures a reference to them always reads the
  * current value with nothing threaded through as an argument. Every dynamic
@@ -15,7 +14,7 @@
  *
  * Every continuous value (position, rotation, scale, opacity, color, ...) is
  * stored as a function() => value, keyed by whatever plain object owns that
- * path — for Phase 1 (and unchanged in Phase 2) that's a world's
+ * path — e.g. a world's
  * {id, kind, props} state-store entry's `props`, not a live Paper.js/Three.js
  * object; everything below is generic over "any object with dot-paths". The
  * editor owns the clock and the microphone; once per frame it mutates
@@ -27,9 +26,7 @@
  *
  * A value can be supplied three ways wherever a world's API accepts one:
  * 1. Numeric value (tween from current value to target over 'duration' seconds)
- * 2. String expression (compiled to a function of t; runs continuously) — legacy,
- *    kept for backward compatibility; neither acceptance script uses this anymore.
- * 3. Function () => value (runs continuously; reads TIME/MIC itself)
+ * 2. Function () => value (runs continuously; reads TIME/MIC itself)
  */
 
 // item => Map of "prop.subprop" path => function() => value
@@ -58,10 +55,6 @@ function getPath(obj, path) {
     return path.split('.').reduce((o, k) => o[k], obj);
 }
 
-// compile a new expression to a function of t.
-function compileExpression(expr) {
-    return new Function('t', `return ${expr};`);
-}
 
 // Persistent, ambient signal objects — owned here, mutated in place once per
 // tick by editor.html's tick() (TIME.t = ...; TIME.dt = ...; MIC.audio_level
@@ -73,11 +66,10 @@ const MIC = { audio_level: 0 };
 
 // Normalize a continuous-value argument into a zero-argument function() => value.
 // - A function is used as-is (expected to be zero-arg and read TIME/MIC itself).
-// - A string is compiled as an expression of t and wrapped to read TIME.t.
+// - Note: Strings are no longer permitted.
 function toDynamicFn(arg) {
     if (typeof arg === 'function') return arg;
-    const compiled = compileExpression(arg);
-    return () => compiled(TIME.t);
+    throw "Dynamic arguments must be functions"
 }
 
 function easeOutCubic(x) {
@@ -156,8 +148,6 @@ function applyTransform(item, propName, x, y, z, duration, valueTransform = (v) 
     }
 }
 
-// per-frame: eval every registered dynamic and write the result.
-// an error-throwing expression is logged once and unregistered.
 function tickDynamicProps() {
     for (const [item, props] of dynamicProps) {
         for (const [path, fn] of props) {
@@ -245,10 +235,6 @@ const sizeBases = new WeakMap(); // item -> Map<path, baseValue>
 // Support dynamic SIZE args on shape creators (radius, width, ...). Effective
 // size = base * (current value / base) = current value, at any time — the
 // mechanism differs by how `arg` is supplied:
-// - string/function: `dynamicSize`'s OWN registered dynamic ticks this
-//   forever, on frp.js's clock, independent of whether the creator is ever
-//   called again (needed for a one-off `[!...]` bracket, where nothing else
-//   would keep re-evaluating it).
 // - plain number: no independent ticking of its own — relies on the RECONCILER
 //   re-invoking the creator every tick (a continuous, non-`!` bracket) and
 //   simply writes the current ratio directly, right now, each time it's
@@ -258,7 +244,7 @@ const sizeBases = new WeakMap(); // item -> Map<path, baseValue>
 // Returns { base } to build the initial geometry with, and register(item) to
 // call once the item exists (every tick is fine — see the two guards below).
 //
-// GUARDED against re-registration (PHASE2 plan section E, part 1): `register`
+// GUARDED against re-registration: `register`
 // is safe to call every tick — from a fresh creation OR a reconciled update of
 // the *same* item — because it never recaptures `sizeBases`' stored baseline
 // once set, and never re-registers a string/function dynamic that's already
@@ -320,7 +306,6 @@ window.registerDynamic = registerDynamic;
 window.unregisterDynamic = unregisterDynamic;
 window.setPath = setPath;
 window.getPath = getPath;
-window.compileExpression = compileExpression;
 window.toDynamicFn = toDynamicFn;
 window.easeOutCubic = easeOutCubic;
 window.registerTween = registerTween;

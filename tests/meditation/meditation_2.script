@@ -1,15 +1,15 @@
 Take a moment to settle into your space and soften your posture.
-We will take three deep breaths together to quiet the mind. [browser_3d: let ring = torus(2.0, 0.05, "white"); opacity(ring, 0.3, 0); let breath = sphere(0.2, 0.2, 0.2, "white")]
+We will take three deep breaths together to quiet the mind. [let ring = browser_3d.torus(2.0, 0.05, "white"); browser_3d.opacity(ring, 0.3, 0); let breath = browser_3d.sphere(0.2, 0.2, 0.2, "white")]
 Bring your focus to the small shape in the center of the ring.
-Inhale deeply, watching it expand to fill the space. [browser_3d: scale(breath, 9.1, 9.1, 9.1, 5)]
-And exhale, emptying your lungs completely. [browser_3d: scale(breath, 1, 1, 1, 5)]
-Inhale again, slow and steady. [browser_3d: scale(breath, 9.1, 9.1, 9.1, 5)]
-Exhale, letting your shoulders drop. [browser_3d: scale(breath, 1, 1, 1, 5)]
-One last deep inhale. [browser_3d: scale(breath, 9.1, 9.1, 9.1, 5)]
-And a long, slow exhale. [browser_3d: scale(breath, 1, 1, 1, 5)]
-Now, let the outer ring fade away. [browser_3d: opacity(ring, 0.0, 3)]
+Inhale deeply, watching it expand to fill the space. [!browser_3d.scale(breath, 9.1, 9.1, 9.1, 5)]
+And exhale, emptying your lungs completely. [!browser_3d.scale(breath, 1, 1, 1, 5)]
+Inhale again, slow and steady. [!browser_3d.scale(breath, 9.1, 9.1, 9.1, 5)]
+Exhale, letting your shoulders drop. [!browser_3d.scale(breath, 1, 1, 1, 5)]
+One last deep inhale. [!browser_3d.scale(breath, 9.1, 9.1, 9.1, 5)]
+And a long, slow exhale. [!browser_3d.scale(breath, 1, 1, 1, 5)]
+Now, let the outer ring fade away. [!browser_3d.opacity(ring, 0.0, 3)]
 Notice the solid shape that remains in the center.
 Let this represent any tension you are still holding in your body.
 Allow your breathing to return to its natural, easy rhythm.
-And slowly watch as that tension dissolves into the empty space. [browser_3d: opacity(breath, 0.0, 10)]
+And slowly watch as that tension dissolves into the empty space. [!browser_3d.opacity(breath, 0.0, 10)]
 Rest here for a few moments in the quiet stillness.
