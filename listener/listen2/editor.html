@@ -53,6 +53,16 @@
       font-family: monospace;
       white-space: nowrap;
     }
+    header .toggle-btn {
+      background: #2a2a2a;
+      color: #e0e0e0;
+      border: 1px solid #444;
+      border-radius: 4px;
+      font-size: 12px;
+      padding: 4px 10px;
+      cursor: pointer;
+    }
+    header .toggle-btn:hover { background: #333; }
     /* Responsive split: side by side when wide, stacked when narrow. */
     .main {
       flex: 1;
@@ -68,6 +78,42 @@
       min-width: 0;
       min-height: 0;
       overflow: hidden;
+    }
+
+    /* ---- API sidebar --------------------------------------------------
+       Content is a same-origin iframe (/api-docs.html) — this pane is just
+       the collapsible container + expand/collapse transition. */
+    .sidebar-pane {
+      flex: 0 0 auto;
+      width: 320px;
+      max-height: 260px;
+      overflow: hidden;
+      background: #1a1a1a;
+      border-bottom: 1px solid #333;
+      box-sizing: border-box;
+      transition: width 0.15s ease, max-height 0.15s ease;
+    }
+    @media (min-width: 900px) {
+      .sidebar-pane {
+        max-height: none;
+        border-bottom: none;
+        border-right: 1px solid #333;
+      }
+    }
+    .sidebar-pane.collapsed {
+      width: 0;
+      max-height: 0;
+      border: 0;
+    }
+    .sidebar-pane iframe {
+      display: block;
+      width: 320px;
+      height: 100%;
+      min-height: 260px;
+      border: 0;
+    }
+    @media (min-width: 900px) {
+      .sidebar-pane iframe { min-height: 0; height: 100%; }
     }
     .output-pane {
       position: relative;
@@ -110,9 +156,13 @@
     <h1>Script Editor</h1>
     <span class="path" id="script-path"></span>
     <span class="counter" id="word-counter"></span>
+    <button class="toggle-btn" id="toggle-sidebar" style="margin-left: 8px;">API ▾</button>
   </header>
 
   <div class="main">
+    <div class="pane sidebar-pane" id="sidebar">
+      <iframe src="/api-docs.html" title="API reference"></iframe>
+    </div>
     <div class="pane editor-pane">
       <textarea id="code"></textarea>
     </div>
@@ -123,6 +173,16 @@
   </div>
 
   <script>
+    // ---- API sidebar: expand/collapse toggle ------------------------------
+    // Docs content itself lives in its own iframe (/api-docs.html), so this
+    // page only owns showing/hiding the pane that embeds it.
+    const sidebarEl = document.getElementById("sidebar");
+    const toggleSidebarBtn = document.getElementById("toggle-sidebar");
+    toggleSidebarBtn.addEventListener("click", () => {
+      const collapsed = sidebarEl.classList.toggle("collapsed");
+      toggleSidebarBtn.textContent = collapsed ? "API ▸" : "API ▾";
+    });
+
     const editor = CodeMirror.fromTextArea(document.getElementById("code"), {
       lineNumbers: true,
       lineWrapping: true,
@@ -198,7 +258,7 @@
     const reconcileCtxStack = [];
     function pushReconcileCtx(bracketId) {
       reconcileCtxStack.push(reconcileCtx);
-      reconcileCtx = { bracketId, callIndex: 0 };
+      reconcileCtx = { bracketId, callIndex: 0, approachIndex: 0 };
     }
     function popReconcileCtx() {
       reconcileCtx = reconcileCtxStack.pop();
@@ -264,6 +324,43 @@
       return { __world: world, __id: id };
     }
 
+    // Per-bracket persistent registry for approach() — bracketId -> Map<approachIndex, lastValue>.
+    // Same call-order-keyed-identity trick as reconcileCreate/reconcileRegistry
+    // above, just for a plain running number instead of a created item: as
+    // long as a bracket calls approach() the same number of times, in the
+    // same order, on every tick (already the assumption reconcileCreate makes
+    // for creator calls), each call site gets its own persistent slot for
+    // free, with no explicit key from the script.
+    const approachRegistry = new Map();
+
+    /**
+     * Ease the value at THIS call site toward `target`, closing `rate` of the
+     * remaining gap every tick — a plain one-line exponential approach filter,
+     * usable anywhere a value is expected: move(c, x, approach(MIC.pitch)).
+     * Drop-in replacement for reading a live/noisy/jumpy signal directly when
+     * you want the animation to chase it smoothly instead of snapping to it
+     * every frame (see MIC.pitch, which is itself a live, ever-changing value).
+     *
+     * No key to manage: called outside a continuous bracket (a one-off
+     * `[!...]`, or anywhere else with no ambient reconcileCtx) there's no
+     * stable per-tick call site to persist against, so it just returns
+     * `target` as-is — nothing to ease across, since there's no "next tick"
+     * for this call.
+     */
+    function approach(target, rate = 0.1) {
+      if (!reconcileCtx) return target;
+
+      const { bracketId } = reconcileCtx;
+      const index = reconcileCtx.approachIndex++;
+      let slots = approachRegistry.get(bracketId);
+      if (!slots) { slots = new Map(); approachRegistry.set(bracketId, slots); }
+
+      const prev = slots.has(index) ? slots.get(index) : target; // first tick: start AT the target, don't ease in from 0
+      const next = prev + (target - prev) * rate;
+      slots.set(index, next);
+      return next;
+    }
+
     // Verb-function namespaces, unchanged from Phase 1 — built once, reused
     // across restarts (only scriptScope, below, gets rebuilt).
     const worldApis = {
@@ -313,6 +410,7 @@
         TIME: window.TIME,
         MIC: window.MIC,
         SCRIPT,
+        approach,
       };
     }
     let scriptScope = buildScriptScope();
@@ -379,6 +477,7 @@
         return;
       }
       reconcileRegistry.delete(bracketId);
+      approachRegistry.delete(bracketId);
       continuousBrackets.set(bracketId, fn);
     }
 
@@ -441,10 +540,15 @@
     // browser_3d.html's applyOps handlers.
     const RMS_GAIN = 5;             // voice RMS is small; lift it toward 0..1 (tune knob)
     const AUDIO_SMOOTHING = 0.8;    // 0 = instant & jittery, ->1 = heavy lag (tune knob)
+    const PITCH_SMOOTHING = 0.6;    // lighter than AUDIO_SMOOTHING — pitch changes faster than loudness (tune knob)
+    const PITCH_MIN_RMS = 0.01;     // below this, autocorrelation on near-silence is unstable noise, not pitch
 
     let audioLevel = 0;   // smoothed RMS loudness, 0..1
+    let pitch = -1;        // smoothed fundamental frequency in Hz; -1 = no pitch detected (silence/unvoiced)
     let analyser = null;  // set once the mic is granted
+    let audioCtx = null;  // set once the mic is granted; sampleRate needed to convert autocorrelation lag -> Hz
     let timeData = null;
+    let floatTimeData = null;
     let startMs = null;   // rAF timestamp at t=0; reset by restart()
     let lastMs = null;    // rAF timestamp of the previous tick
 
@@ -453,7 +557,7 @@
         console.error("mic: getUserMedia unavailable — needs a secure context (https or localhost).");
         return;
       }
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
       const tryResume = (why) => {
         if (audioCtx.state === "suspended") {
@@ -475,6 +579,7 @@
         analyser.fftSize = 1024;
         source.connect(analyser);
         timeData = new Uint8Array(analyser.fftSize);
+        floatTimeData = new Float32Array(analyser.fftSize);
         tryResume("mic granted");
         console.log(`mic: ready, context '${audioCtx.state}'. If that reads 'suspended', click the page once.`);
       }).catch((err) => {
@@ -496,7 +601,63 @@
       audioLevel = audioLevel * AUDIO_SMOOTHING + target * (1 - AUDIO_SMOOTHING);
     }
 
-    // The single master clock: computes t/dt, refreshes audioLevel, mutates
+    // Autocorrelation-based pitch detection (time-domain, not FFT-bin-picking —
+    // an FFT bin at fftSize 1024 is ~43Hz wide, too coarse to resolve a voice's
+    // fundamental). Returns Hz, or -1 if the signal is too quiet to be reliable.
+    // Standard ACF pitch tracker (same shape as the widely-used public-domain
+    // examples): trim leading/trailing near-silence, autocorrelate, find the
+    // first peak after the initial downslope, then parabolic-interpolate
+    // around it for sub-sample precision.
+    function autoCorrelate(buf, sampleRate) {
+      const SIZE = buf.length;
+      let sumSq = 0;
+      for (let i = 0; i < SIZE; i++) sumSq += buf[i] * buf[i];
+      if (Math.sqrt(sumSq / SIZE) < PITCH_MIN_RMS) return -1;
+
+      let start = 0, end = SIZE - 1;
+      const thres = 0.2;
+      for (let i = 0; i < SIZE / 2; i++) { if (Math.abs(buf[i]) < thres) { start = i; break; } }
+      for (let i = 1; i < SIZE / 2; i++) { if (Math.abs(buf[SIZE - i]) < thres) { end = SIZE - i; break; } }
+      const trimmed = buf.slice(start, end);
+      const n = trimmed.length;
+
+      const c = new Float32Array(n);
+      for (let lag = 0; lag < n; lag++) {
+        let sum = 0;
+        for (let i = 0; i < n - lag; i++) sum += trimmed[i] * trimmed[i + lag];
+        c[lag] = sum;
+      }
+
+      let d = 0;
+      while (d + 1 < n && c[d] > c[d + 1]) d++;
+      let maxVal = -1, maxPos = -1;
+      for (let i = d; i < n; i++) {
+        if (c[i] > maxVal) { maxVal = c[i]; maxPos = i; }
+      }
+      if (maxPos <= 0 || maxPos >= n - 1) return -1;
+
+      const x1 = c[maxPos - 1], x2 = c[maxPos], x3 = c[maxPos + 1];
+      const a = (x1 + x3 - 2 * x2) / 2;
+      const b = (x3 - x1) / 2;
+      const t0 = a ? maxPos - b / (2 * a) : maxPos;
+
+      return t0 > 0 ? sampleRate / t0 : -1;
+    }
+
+    // No smoothing across a silence gap — a stale pitch bleeding into the next
+    // phrase would be worse than a hard reset to -1.
+    function updatePitch() {
+      if (!analyser) return;
+      analyser.getFloatTimeDomainData(floatTimeData);
+      const detected = autoCorrelate(floatTimeData, audioCtx.sampleRate);
+      if (detected > 0) {
+        pitch = pitch > 0 ? pitch * PITCH_SMOOTHING + detected * (1 - PITCH_SMOOTHING) : detected;
+      } else {
+        pitch = -1;
+      }
+    }
+
+    // The single master clock: computes t/dt, refreshes audioLevel/pitch, mutates
     // TIME/MIC IN PLACE (no ctx object built or passed anywhere — PHASE2 plan
     // section B), invokes every registered continuous bracket (inside the
     // ambient reconciliation context from section D), advances every
@@ -509,9 +670,11 @@
       if (lastMs === null) lastMs = nowMs;
 
       updateAudioLevel();
+      updatePitch();
       TIME.t = (nowMs - startMs) / 1000;
       TIME.dt = (nowMs - lastMs) / 1000;
       MIC.audio_level = audioLevel;
+      MIC.pitch = pitch;
       lastMs = nowMs;
 
       for (const [bracketId, fn] of continuousBrackets) {
@@ -620,6 +783,7 @@
       resetWorldState();
       continuousBrackets.clear();   // no lingering per-tick invocations after a restart
       reconcileRegistry.clear();
+      approachRegistry.clear();
       scriptScope = buildScriptScope(); // fresh scope: wipes user `let`-bindings, keeps worldApis/TIME/MIC/SCRIPT wiring
       frames.forEach((f) => { f.contentWindow.location.reload(); });
     }

@@ -1,0 +1,23 @@
+
+Let's play with circles, and decide what will go in the "backpack"...
+
+[!let text_stack = (lines, x = DEFAULT_CENTER_2D.x, y = DEFAULT_CENTER_2D.y, size = 24, color = 'white', align = 'center') =>
+    lines.map((line, i) => browser_2d.text(line, x, y + i * size * 1.2, size, color, align))]
+
+[!let lerp = (from, to, duration, ease = (p) => p) => {
+    const startT = TIME.t;
+    return () => {
+        if (duration <= 0) return to;
+        const p = Math.min(1, (TIME.t - startT) / duration);
+        return from + (to - from) * ease(p);
+    };
+}]
+
+[text_stack(["Vol " + MIC.audio_level, "Pitch " + MIC.pitch, "Time " + TIME.t], 10, 10, 24, "green", "left")]
+
+
+[let c = browser_2d.circle(50, "red");]
+
+[browser_2d.move(c, DEFAULT_CENTER_2D.x, MIC.pitch < 0 ? DEFAULT_CENTER_2D.y : approach(DEFAULT_CENTER_2D.y - (MIC.pitch) ))]
+
+Fin.

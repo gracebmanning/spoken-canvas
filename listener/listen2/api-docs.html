@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>API Reference</title>
+
+<!-- Only needed for the color-name swatches below; this page never calls
+     into the scripting API itself (frp.js/api_2d.js/api_3d.js), it just
+     documents it. -->
+<script src="/interpreters/colors.js"></script>
+
+<style>
+  html, body {
+    margin: 0;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 12.5px;
+    line-height: 1.4;
+  }
+  body {
+    padding: 8px 14px 20px;
+    box-sizing: border-box;
+  }
+  h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #888;
+    margin: 14px 0 6px;
+  }
+  h2:first-child { margin-top: 4px; }
+  details {
+    margin-bottom: 2px;
+    border-bottom: 1px solid #2a2a2a;
+  }
+  summary {
+    cursor: pointer;
+    padding: 6px 2px;
+    font-weight: 600;
+    color: #cfcfcf;
+    list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: "▸ ";
+    color: #666;
+  }
+  details[open] summary::before { content: "▾ "; }
+  .doc-entry {
+    margin: 0 0 10px 14px;
+  }
+  .sig {
+    display: block;
+    font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+    color: #8ab4f8;
+    word-break: break-word;
+  }
+  .desc {
+    margin: 2px 0 0;
+    color: #aaa;
+  }
+  .note {
+    margin: 0 0 10px 14px;
+    color: #aaa;
+  }
+  .note code {
+    font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+    color: #ffd54f;
+  }
+  .swatches {
+    margin: 0 0 10px 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .swatch {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+    color: #ccc;
+    background: #222;
+    border: 1px solid #333;
+    border-radius: 3px;
+    padding: 2px 6px 2px 4px;
+  }
+  .swatch .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid #555;
+    flex: 0 0 auto;
+  }
+</style>
+</head>
+<body>
+
+  <h2>Bracket syntax</h2>
+  <div class="note">
+    <code>[code]</code> — continuous: re-runs every frame. Use for anything
+    that should keep reacting to <code>TIME.t</code> /
+    <code>MIC.audio_level</code> (creating a shape, an ongoing rotation, a
+    growing size). Creator calls are safe to leave continuous — they
+    reconcile onto the same object instead of duplicating it.
+  </div>
+  <div class="note">
+    <code>[!code]</code> — one-shot: runs once, then is discarded. Use for
+    a fixed-target tween/fade or a discrete action (<code>clear()</code>,
+    <code>remove()</code>, ...). A fixed-target tween left continuous
+    would re-assert its (stale) target forever and fight the next cue's
+    tween.
+  </div>
+  <div class="note">
+    <code>[RESET()]</code> — sugar for
+    <code>browser_2d.clear(); browser_3d.clear();</code>
+  </div>
+  <div class="note">
+    Any argument slot documented below as reactive accepts either a plain
+    number (snap instantly, or tween over <code>duration</code> seconds if
+    given) or a <code>() =&gt; value</code> function (evaluated every
+    frame — read <code>TIME</code>/<code>MIC</code> inside it).
+  </div>
+
+  <h2>Ambient vars</h2>
+  <div class="doc-entry">
+    <code class="sig">TIME.t</code>
+    <p class="desc">Seconds since the script started (or last restart).</p>
+  </div>
+  <div class="doc-entry">
+    <code class="sig">TIME.dt</code>
+    <p class="desc">Seconds since the previous frame.</p>
+  </div>
+  <div class="doc-entry">
+    <code class="sig">MIC.audio_level</code>
+    <p class="desc">Smoothed microphone loudness, 0..1.</p>
+  </div>
+  <div class="doc-entry">
+    <code class="sig">MIC.pitch</code>
+    <p class="desc">Smoothed fundamental frequency of the mic input, in Hz. <code>-1</code> when silent or no clear pitch is detected — check for that before using the value.</p>
+  </div>
+  <div class="doc-entry">
+    <code class="sig">SCRIPT.words_completed()</code>
+    <p class="desc">Count of spoken words passed so far (brackets excluded).</p>
+  </div>
+
+  <h2>Helpers</h2>
+  <div class="doc-entry">
+    <code class="sig">approach(target, rate=0.1)</code>
+    <p class="desc">Eases toward a live, ever-changing value instead of snapping straight to it — drop it in
+      anywhere a plain number is expected, e.g. <code>move(c, x, approach(MIC.pitch))</code>. Each call to
+      <code>approach()</code> in a continuous (non-<code>!</code>) bracket remembers its own last value from
+      frame to frame automatically — no variable to declare yourself. <code>rate</code> is how much of the
+      remaining gap it closes per frame (closer to 0 = laggier/smoother, closer to 1 = snappier). Only works
+      inside a continuous bracket — called from a one-shot <code>[!...]</code> (or anywhere with no per-tick
+      call site to remember), it just returns <code>target</code> unchanged.</p>
+  </div>
+
+  <h2>browser_2d (Paper.js)</h2>
+  <details open>
+    <summary>Creators</summary>
+    <div class="doc-entry">
+      <code class="sig">circle(radius, color, x=960, y=540)</code>
+      <p class="desc">radius/color: number/string or reactive.</p>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">square(size, color, x=960, y=540)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">rect(width, height, color, x=960, y=540)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">ellipse(width, height, color, x=960, y=540)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">arrow(fromX, fromY, toX, toY, color='black', thickness=3)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">line(fromX, fromY, toX, toY, color='white', thickness=3)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">text(content, x=960, y=540, size=24, color='white', align='center')</code>
+      <p class="desc">content may be a reactive () =&gt; value for live text.</p>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">box(width, height, color='white', x=960, y=540, borderWidth=2)</code>
+      <p class="desc">Outline only, no fill — good for diagrams.</p>
+    </div>
+  </details>
+  <details open>
+    <summary>Mutators</summary>
+    <div class="doc-entry">
+      <code class="sig">move(handle, x=960, y=540, duration=0)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">rotate(handle, degrees=0, duration=0)</code>
+      <p class="desc">Absolute angle. Reactive degrees spins continuously.</p>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">scale(handle, sx=1.0, sy, duration=0)</code>
+      <p class="desc">Absolute factor, 1 = original size. sy defaults to sx.</p>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">fade(handle, value=1.0, duration=0)</code>
+      <p class="desc">Alias: opacity(...). 0 = invisible, 1 = opaque.</p>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">remove(handle)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">clear()</code>
+    </div>
+  </details>
+
+  <h2>browser_3d (Three.js)</h2>
+  <details open>
+    <summary>Creators</summary>
+    <div class="doc-entry">
+      <code class="sig">cube(sizex=1.0, sizey, sizez, color='white', x=0, y=0)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">sphere(radx=0.5, rady, radz, color='white', x=0, y=0)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">torus(radx=0.5, rady=0.25, color='white', x=0, y=0)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">tube(rad1=0.5, rad2, height=0.5, color='white', x=0, y=0)</code>
+      <p class="desc">Cylinder (rad1===rad2), cone, or frustum.</p>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">cloud(quantity=1.0, spread=1.0, color='white', shape='circle', x=0, y=0)</code>
+      <p class="desc">Scattered point cloud.</p>
+    </div>
+  </details>
+  <details open>
+    <summary>Mutators</summary>
+    <div class="doc-entry">
+      <code class="sig">move(handle, x=0, y=0, z=0, duration=0)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">rotate(handle, rx=0, ry=0, rz=0, duration=0)</code>
+      <p class="desc">Degrees per axis.</p>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">scale(handle, sx=1.0, sy, sz, duration=0)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">noise(handle, intensity=0.5)</code>
+      <p class="desc">Organic per-vertex drift. noise(handle, 0) stops and snaps back.</p>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">color(handle, colorValue, duration=0)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">opacity(handle, value=1.0, duration=0)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">remove(handle)</code>
+    </div>
+    <div class="doc-entry">
+      <code class="sig">clear()</code>
+    </div>
+  </details>
+
+  <h2>Colors</h2>
+  <div class="swatches" id="color-swatches"></div>
+
+  <script>
+    // COLOR_MAP comes from colors.js, loaded above; build the swatch list
+    // here so adding a color there is the only place it needs to change.
+    const swatchesEl = document.getElementById("color-swatches");
+    for (const [name, hex] of Object.entries(COLOR_MAP)) {
+      const span = document.createElement("span");
+      span.className = "swatch";
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      dot.style.background = hex;
+      span.appendChild(dot);
+      span.appendChild(document.createTextNode(name));
+      swatchesEl.appendChild(span);
+    }
+  </script>
+</body>
+</html>

@@ -21,6 +21,7 @@ from pathlib import Path
 
 EDITOR_DIR = Path(__file__).parent / "listen2"
 EDITOR_HTML = EDITOR_DIR / "editor.html"
+API_DOCS_HTML = EDITOR_DIR / "api-docs.html"
 # Interpreter pages (browser_2d.html, browser_3d.html, colors.js, ...) are
 # served so the editor can embed them as iframes.
 INTERPRETERS_DIR = (Path(__file__).parent.parent / "interpreters" / "browser").resolve()
@@ -45,6 +46,8 @@ class EditorHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/editor.html"):
             self._send(200, EDITOR_HTML.read_text(encoding="utf-8"), "text/html; charset=utf-8")
+        elif self.path == "/api-docs.html":
+            self._send(200, API_DOCS_HTML.read_text(encoding="utf-8"), "text/html; charset=utf-8")
         elif self.path == "/script":
             content = self.script_path.read_text(encoding="utf-8")
             payload = json.dumps({"path": str(self.script_path), "content": content})

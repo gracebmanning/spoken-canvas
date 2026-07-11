@@ -9,8 +9,8 @@
  * tick() — so any closure that captures a reference to them always reads the
  * current value with nothing threaded through as an argument. Every dynamic
  * value below is therefore a **zero-argument** function(), not function(ctx);
- * it reads TIME.t / MIC.audio_level directly wherever it used to read
- * ctx.t / ctx.audioLevel.
+ * it reads TIME.t / MIC.audio_level / MIC.pitch directly wherever it used to
+ * read ctx.t / ctx.audioLevel.
  *
  * Every continuous value (position, rotation, scale, opacity, color, ...) is
  * stored as a function() => value, keyed by whatever plain object owns that
@@ -18,7 +18,7 @@
  * {id, kind, props} state-store entry's `props`, not a live Paper.js/Three.js
  * object; everything below is generic over "any object with dot-paths". The
  * editor owns the clock and the microphone; once per frame it mutates
- * TIME.t/TIME.dt/MIC.audio_level itself, then calls tickDynamicProps()
+ * TIME.t/TIME.dt/MIC.audio_level/MIC.pitch itself, then calls tickDynamicProps()
  * (advancing every registered dynamic across both worlds' state stores), then
  * posts each world's fully-resolved state down as
  * {type:"applyOps", t, ops, removed} (see editor.html's tick()). A world's
@@ -62,7 +62,7 @@ function getPath(obj, path) {
 // frp.js internal that holds a reference to these always sees the current
 // value. See listener/FRP_PHASE2_PLAN.md section B.
 const TIME = { t: 0, dt: 0 };
-const MIC = { audio_level: 0 };
+const MIC = { audio_level: 0, pitch: -1 };
 
 // Normalize a continuous-value argument into a zero-argument function() => value.
 // - A function is used as-is (expected to be zero-arg and read TIME/MIC itself).
