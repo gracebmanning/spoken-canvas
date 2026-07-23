@@ -1,39 +1,21 @@
 [!let voice_scale = (lo = 0.9, hi = 1.2) => lo + MIC.audio_level * (hi - lo)]
-
+[!let excited = (from, to) => lines_since() >= from && lines_since() < to]
 Let's zoom in. Past the visible, past the cells, past the molecules, all the way down to the building block of everything. [RESET()] [!let block = browser_3d.cube(1.2, 1.2, 1.2, "gray")] [browser_3d.rotate(block, TIME.t * 15, TIME.t * 20, 0)]
-
 It looks solid: a simple, ordinary block of matter. [!let title = browser_2d.text("THE ATOM", DEFAULT_CENTER_2D.x, 120, 72, "white")]
-
 But zoom in far enough, and that solid block dissolves into something far stranger. [!browser_3d.opacity(block, 0, 1.5)]
-
 At the heart of every atom sits a dense, heavy core, the nucleus. [!browser_3d.remove(block)] [!let nucleus = browser_3d.sphere(0.55, 0.55, 0.55, "red")]
-
-It's a tight bundle of protons and neutrons, humming with energy. Listen, it pulses as I speak. [!let excite = 0] [browser_3d.scale(nucleus, approach(0.9 + excite * 0.45) + MIC.audio_level * 0.28)]
-
+It's a tight bundle of protons and neutrons, humming with energy. Listen, it pulses as I speak. [browser_3d.scale(nucleus, approach(0.9 + (excited(7, 9) ? 0.45 : 0)) + MIC.audio_level * 0.28)]
 Around that core live the electrons. But they don't circle it like planets around a sun. [!let ecloud = browser_3d.cloud(1.0, 1.6, "cyan")]
-
 Each electron is really a smear of probability, a restless cloud of "maybe here, maybe there." [!browser_3d.noise(ecloud, 0.6)]
-
 To tame that fuzziness, we picture the cloud as shells, or orbitals, each one a rung of energy. [!let shell1 = browser_3d.torus(1.7, 0.02, "white")] [browser_3d.rotate(shell1, 75, TIME.t * 18, 0)]
-
 Outer shells sit farther from the core and hold the most energetic electrons. [!let shell2 = browser_3d.torus(2.3, 0.02, "violet")] [browser_3d.rotate(shell2, 75, TIME.t * 12, 55)] [!browser_3d.opacity(shell2, 0.55, 1.5)]
-
 We can also flatten the whole thing into a simple energy-level diagram. [!let base = browser_2d.line(1520, 800, 1840, 800, "cyan", 4)] [!let lift = browser_2d.line(1520, 630, 1840, 630, "white", 4)]
-
 Each rung is an amount of energy an electron is allowed to have. [!let elec = browser_2d.circle(15, "yellow", 1560, 800)] [!let lbl = browser_2d.text("energy levels", 1680, 870, 30, "white")]
-
-Now feed it energy, a photon, a jolt of heat, and the atom drinks it in. [!browser_3d.color(nucleus, "orange", 1)] [!excite = 1] [!browser_3d.color(ecloud, "yellow", 1.5)]
-
+Now feed it energy, a photon, a jolt of heat, and the atom drinks it in. [!browser_3d.color(nucleus, "orange", 1)] [!browser_3d.color(ecloud, "yellow", 1.5)]
 An electron leaps to a higher rung. [!browser_2d.move(elec, 1560, 630, 1)] [!let spark = browser_3d.sphere(0.09, 0.09, 0.09, "yellow", 1.2, 0.8)] [!browser_3d.move(spark, 3.6, 2.2, 0, 1.8)] [!browser_3d.opacity(spark, 0, 1.8)]
-
-But it can't stay excited. It falls back down, and releases the difference as a flash of light. [!browser_2d.move(elec, 1560, 800, 1.2)] [!excite = 0] [!let beam = browser_3d.tube(0.04, 0.04, 5, "white")] [!browser_3d.rotate(beam, 0, 0, 90)] [!browser_3d.opacity(beam, 0, 1.5)]
-
+But it can't stay excited. It falls back down, and releases the difference as a flash of light. [!browser_2d.move(elec, 1560, 800, 1.2)] [!let beam = browser_3d.tube(0.04, 0.04, 5, "white")] [!browser_3d.rotate(beam, 0, 0, 90)] [!browser_3d.opacity(beam, 0, 1.5)]
 That glow, light shed by settling electrons, is how we see color, fire, and starlight. [!browser_3d.color(ecloud, "cyan", 2)] [!let glow = browser_2d.text("light", DEFAULT_CENTER_2D.x, 980, 44, "yellow")] [!browser_2d.fade(glow, 0, 2.5)]
-
 And it's never just one. Trillions of these tiny systems, humming together, make up you, this room, and the whole world. [browser_3d.scale(ecloud, voice_scale())] [!browser_3d.noise(ecloud, 0.85)]
-
 From a tight little nucleus out to the soft edge of its electron cloud, that is the atom. [!browser_3d.opacity(shell1, 0.25, 2)] [!browser_3d.opacity(shell2, 0.25, 2)]
-
 Small enough to overlook. Big enough to be everything. [!browser_2d.fade(title, 0, 3)] [!browser_3d.opacity(ecloud, 0, 3)] [!browser_3d.opacity(nucleus, 0, 3)]
-
 Thanks for zooming in. [RESET()]

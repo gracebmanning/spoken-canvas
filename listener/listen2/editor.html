@@ -397,6 +397,54 @@
       return next;
     }
 
+    // ---- Per-bracket signals: elapsed() / lines_since() -------------------
+    // bracketId -> { line, firedAt }. Written every time a continuous bracket
+    // is landed on (see registerContinuous), so re-landing — including
+    // stepping backward onto it — restarts both signals from zero. Cleared on
+    // restart() alongside the other per-bracket registries.
+    const bracketMeta = new Map();
+
+    // Line (0-based) of the word the cursor is currently on, or null when the
+    // cursor is at the pre-start sentinel / there are no words.
+    function cursorLine() {
+      if (wordIndex < 0 || !words.length) return null;
+      return editor.posFromIndex(words[wordIndex].from).line;
+    }
+
+    /**
+     * Seconds since THIS bracket last fired — the event ("this instruction
+     * ran") made continuously readable, so no flag has to record that it did.
+     * Holds and windows are then just expressions over it, e.g.
+     * `elapsed() < 3 ? 1.35 : 1` (snap to 1.35 for three seconds, then back).
+     *
+     * Like approach(), there's no key to manage: called outside a continuous
+     * bracket (a one-off `[!...]`) there's no "next tick" for this call site,
+     * so it returns 0 — the instant it fired.
+     */
+    function elapsed() {
+      if (!reconcileCtx) return 0;
+      const meta = bracketMeta.get(reconcileCtx.bracketId);
+      return meta ? TIME.t - meta.firedAt : 0;
+    }
+
+    /**
+     * How many lines the cursor has advanced past THIS bracket's own line: 0
+     * while the reader is still on it, 1 on the next line, and so on. Relative
+     * by construction, so inserting lines above never invalidates it.
+     *
+     * Deliberately a number, not a boolean window — the author writes the
+     * predicate: `lines_since() < 3`, `lines_since() >= 2 && lines_since() < 6`.
+     * Returns 0 outside a continuous bracket, and while the cursor sits at the
+     * pre-start sentinel.
+     */
+    function lines_since() {
+      if (!reconcileCtx) return 0;
+      const meta = bracketMeta.get(reconcileCtx.bracketId);
+      const cur = cursorLine();
+      if (!meta || cur === null) return 0;
+      return cur - meta.line;
+    }
+
     // Verb-function namespaces, unchanged from Phase 1 — built once, reused
     // across restarts (only scriptScope, below, gets rebuilt).
     const worldApis = {
@@ -447,6 +495,8 @@
         MIC: window.MIC,
         SCRIPT,
         approach,
+        elapsed,
+        lines_since,
       };
     }
     let scriptScope = buildScriptScope();
@@ -501,7 +551,7 @@
     // that also resets this bracket's reconciliation call-site history, so
     // its next invocation treats every creator call as fresh (orphaning
     // whatever it previously created — accepted, not solved here).
-    function registerContinuous(bracketId, code) {
+    function registerContinuous(bracketId, code, line) {
       const rewritten = globalizeDeclarationsForWith(code, scriptScope);
       let fn;
       try {
@@ -514,6 +564,9 @@
       }
       reconcileRegistry.delete(bracketId);
       approachRegistry.delete(bracketId);
+      // Landing on the bracket IS the event: (re)start elapsed()/lines_since()
+      // from here, so stepping backward onto it re-arms both from zero.
+      bracketMeta.set(bracketId, { line, firedAt: TIME.t });
       continuousBrackets.set(bracketId, fn);
     }
 
@@ -542,7 +595,7 @@
         evalOneShot(content.slice(1).trim());
       } else {
         const bracketId = `${token.from}:${token.to}`; // stable source-position key
-        registerContinuous(bracketId, content);
+        registerContinuous(bracketId, content, editor.posFromIndex(token.from).line);
       }
     }
 
@@ -751,7 +804,11 @@
     // between words, and landing on a command executes it.
     const counterEl = document.getElementById("word-counter");
     let words = [];        // [{ from, to, cmd }] character offsets into the text
-    let wordIndex = -1;   // lands before the first word -- the first forward step lands on word 0.
+    // -1 means "before the first word": nothing is landed on yet, so the first
+    // forward step lands on word 0 and executes it if it's a command. Without
+    // this sentinel, starting at 0 meant the very first token was stepped over
+    // and never ran — so leading `[!let ...]` definitions were silently skipped.
+    let wordIndex = -1;
     let currentMark = null;
 
     function computeWords() {
@@ -824,6 +881,7 @@
       resetWorldState();
       continuousBrackets.clear();   // no lingering per-tick invocations after a restart
       reconcileRegistry.clear();
+      bracketMeta.clear();
       approachRegistry.clear();
       scriptScope = buildScriptScope(); // fresh scope: wipes user `let`-bindings, keeps worldApis/TIME/MIC/SCRIPT wiring
       frames.forEach((f) => { f.contentWindow.location.reload(); });
