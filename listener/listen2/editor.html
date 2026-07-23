@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -16,17 +17,20 @@
   <script src="/interpreters/api_3d.js"></script>
 
   <style>
-    html, body {
+    html,
+    body {
       margin: 0;
       height: 100%;
       background: #212121;
       color: #e0e0e0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
+
     body {
       display: flex;
       flex-direction: column;
     }
+
     header {
       padding: 10px 16px;
       background: #1a1a1a;
@@ -36,16 +40,19 @@
       gap: 12px;
       flex: 0 0 auto;
     }
+
     header h1 {
       font-size: 15px;
       font-weight: 600;
       margin: 0;
     }
+
     header .path {
       font-size: 12px;
       color: #888;
       font-family: monospace;
     }
+
     header .counter {
       margin-left: auto;
       font-size: 12px;
@@ -53,6 +60,7 @@
       font-family: monospace;
       white-space: nowrap;
     }
+
     header .toggle-btn {
       background: #2a2a2a;
       color: #e0e0e0;
@@ -62,7 +70,11 @@
       padding: 4px 10px;
       cursor: pointer;
     }
-    header .toggle-btn:hover { background: #333; }
+
+    header .toggle-btn:hover {
+      background: #333;
+    }
+
     /* Responsive split: side by side when wide, stacked when narrow. */
     .main {
       flex: 1;
@@ -70,9 +82,13 @@
       display: flex;
       flex-direction: column;
     }
+
     @media (min-width: 900px) {
-      .main { flex-direction: row; }
+      .main {
+        flex-direction: row;
+      }
     }
+
     .pane {
       flex: 1 1 50%;
       min-width: 0;
@@ -93,6 +109,7 @@
       box-sizing: border-box;
       transition: width 0.15s ease, max-height 0.15s ease;
     }
+
     @media (min-width: 900px) {
       .sidebar-pane {
         max-height: none;
@@ -100,11 +117,13 @@
         border-right: 1px solid #333;
       }
     }
+
     .sidebar-pane.collapsed {
       width: 0;
       max-height: 0;
       border: 0;
     }
+
     .sidebar-pane iframe {
       display: block;
       width: 320px;
@@ -112,16 +131,25 @@
       min-height: 260px;
       border: 0;
     }
+
     @media (min-width: 900px) {
-      .sidebar-pane iframe { min-height: 0; height: 100%; }
+      .sidebar-pane iframe {
+        min-height: 0;
+        height: 100%;
+      }
     }
+
     .output-pane {
       position: relative;
       background: #000;
       border-top: 1px solid #333;
     }
+
     @media (min-width: 900px) {
-      .output-pane { border-top: none; border-left: 1px solid #333; }
+      .output-pane {
+        border-top: none;
+        border-left: 1px solid #333;
+      }
     }
 
     .CodeMirror {
@@ -129,6 +157,7 @@
       font-size: 14px;
       font-family: "SFMono-Regular", Menlo, Consolas, monospace;
     }
+
     /* The word the listener is currently on. */
     .cm-current-word {
       background: #ffd54f;
@@ -147,10 +176,17 @@
       background: transparent;
       transform-origin: top left;
     }
-    #frame-3d { z-index: 1; }
-    #frame-2d { z-index: 2; }
+
+    #frame-3d {
+      z-index: 1;
+    }
+
+    #frame-2d {
+      z-index: 2;
+    }
   </style>
 </head>
+
 <body>
   <header>
     <h1>Script Editor</h1>
@@ -388,7 +424,7 @@
     // (words/wordIndex); see PHASE2 plan section B for why this is a method,
     // not a plain property the way TIME/MIC are.
     const SCRIPT = {
-      words_completed: () => words.slice(0, wordIndex).filter((w) => !w.cmd).length,
+      words_completed: () => words.slice(0, Math.max(0, wordIndex)).filter((w) => !w.cmd).length,
     };
 
     // One shared script-level scope (PHASE2 plan section A) — replaces
@@ -715,7 +751,7 @@
     // between words, and landing on a command executes it.
     const counterEl = document.getElementById("word-counter");
     let words = [];        // [{ from, to, cmd }] character offsets into the text
-    let wordIndex = 0;
+    let wordIndex = -1;   // lands before the first word -- the first forward step lands on word 0.
     let currentMark = null;
 
     function computeWords() {
@@ -741,7 +777,7 @@
       // Merge into reading order.
       tokens.sort((a, b) => a.from - b.from);
       words = tokens;
-      if (wordIndex > words.length - 1) wordIndex = Math.max(0, words.length - 1);
+      if (wordIndex > words.length - 1) wordIndex = Math.max(-1, words.length - 1);
     }
 
     function refreshMark(scroll) {
@@ -749,6 +785,11 @@
 
       if (!words.length) {
         counterEl.textContent = "no words";
+        return;
+      }
+
+      if (wordIndex < 0) {
+        counterEl.textContent = `start / ${words.length} words`;
         return;
       }
 
@@ -763,7 +804,7 @@
 
     function moveWord(delta) {
       if (!words.length) return;
-      wordIndex = Math.max(0, Math.min(wordIndex + delta, words.length - 1));
+      wordIndex = Math.max(-1, Math.min(wordIndex + delta, words.length - 1));
       refreshMark(true);
       // Landing on a bracketed command executes it (like the original listener).
       const w = words[wordIndex];
@@ -776,7 +817,7 @@
     // interpreter iframes so their native objects are wiped clean too. We
     // don't execute on landing here.
     function restart() {
-      wordIndex = 0;
+      wordIndex = -1;
       refreshMark(true);
       startMs = null;
       lastMs = null;
@@ -829,4 +870,5 @@
     connect();
   </script>
 </body>
+
 </html>

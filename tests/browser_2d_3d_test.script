@@ -1,3 +1,5 @@
+[!let voice_scale = (lo = 0.8, hi = 1.3) => lo + MIC.audio_level * (hi - lo)]
+
 Let's begin with a circle. [!let c1 = browser_2d.circle(50, "red")]
 Next, let's add a cube. [!let b1 = browser_3d.cube(0.5, 0.5, 0.5, "blue")]
 Now let's move the cube to the right. [!browser_3d.move(b1, 1.0, 0.0, 0.0)]
@@ -17,12 +19,12 @@ Now a tube, like a cylinder. [!let tu1 = browser_3d.tube(0.3, 0.3, 0.8, "yellow"
 Move it to the left. [!browser_3d.move(tu1, -1.5, 0.0, 0.0)]
 And a cone, with a pointed top. [!let tu2 = browser_3d.tube(0.0, 0.2, 0.5, "red")]
 Let's move it up. [!browser_3d.move(tu2, 0.0, 0.6, 0.0)]
-Let's make the tube audio reactive. [browser_3d.scale(tu1, 0.8 + MIC.audio_level * 0.5)]
+Let's make the tube audio reactive. [browser_3d.scale(tu1, voice_scale())]
 It should now be reacting to the sound of my voice.
 Now let's remove the first cube. [!browser_3d.remove(b1)]
-We can make all the shapes audio reactive. [browser_3d.scale(b2, 0.8 + MIC.audio_level * 0.5); browser_3d.scale(s1, 0.8 + MIC.audio_level * 0.5); browser_3d.scale(s2, 0.8 + MIC.audio_level * 0.5)]
+We can make all the shapes audio reactive. [browser_3d.scale(b2, voice_scale()); browser_3d.scale(s1, voice_scale()); browser_3d.scale(s2, voice_scale())]
 That should look really neat!
-But let's make it more intense. [browser_3d.scale(b2, 0.5 + MIC.audio_level * 0.9); browser_3d.scale(s1, 0.5 + MIC.audio_level * 0.9); browser_3d.scale(s2, 0.5 + MIC.audio_level * 0.9); browser_3d.scale(tu1, 0.5 + MIC.audio_level * 0.9)]
+But let's make it more intense. [browser_3d.scale(b2, voice_scale(0.5, 1.4)); browser_3d.scale(s1, voice_scale(0.5, 1.4)); browser_3d.scale(s2, voice_scale(0.5, 1.4)); browser_3d.scale(tu1, voice_scale(0.5, 1.4))]
 Now I want the cone to scale up and down in a loop. [browser_3d.scale(tu2, Math.abs(Math.sin(TIME.t * 2)) * 3)]
 And stretch out the sides of the torus. [!browser_3d.scale(t1, 2.5, 1.0, 1.0)]
 Let's change the torus color. [!browser_3d.color(t1, "teal")]
