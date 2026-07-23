@@ -78,7 +78,6 @@ These live objects are always in scope and are mutated in place each frame — r
 - `let name = ...` binds a variable that **persists across brackets** (until restart). Define reusable arrow-function helpers this way, e.g. `[!let spin = (s) => browser_3d.rotate(s, 0, TIME.t * s, 0)]`.
 - `approach(target, rate = 0.1)` — an exponential smoothing filter for chasing a live signal; only smooths inside a continuous bracket.
 - Pass `() => value` where a value must keep updating through a mechanism a plain number can't reach (e.g. a Paper.js circle's radius, which can't be resized after creation). Most of the time, a plain expression inside a continuous bracket is enough, since the whole bracket re-runs.
-    > **Gotcha:** the first word of a script is _not_ executed when you step forward from the start (stepping runs the word you land _on_). Don't put a `let`/helper definition as the very first token. Lead with a spoken sentence, then define helpers.
 
 ### Example
 
@@ -139,7 +138,6 @@ spoken-canvas/
 
 - **Nothing renders / renderers are blank.** They only draw while the editor is driving them. Make sure you're viewing the editor at `http://localhost:8100`, not a renderer file on its own.
 - **No audio reactivity.** Allow the mic when prompted and click once in the page so the audio context can start. Also confirm your reactive command is a continuous `[ ... ]` bracket, not `[! ... ]`.
-- **A helper is "not defined."** It was probably the first token in the script and got skipped on the first forward step — move it after your opening sentence (see the gotcha above).
 - **Assets won't load.** The renderers need internet access for the Paper.js / Three.js / CodeMirror CDNs.
 - **A continuous effect won't stop or a later tween won't take.** That's the stickiness of continuous brackets — restart (Ctrl + ↑), or drive the property from a mutable `let` you flip with one-shots.
 
