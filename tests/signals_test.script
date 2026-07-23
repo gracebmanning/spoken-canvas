@@ -1,0 +1,23 @@
+[!let lerp = (a, b, t) => a + (b - a) * t]
+[!let ramp = (secs) => Math.min(elapsed() / secs, 1)]
+[!let between = (from, to) => lines_since() >= from && lines_since() < to]
+A live readout, so you can watch a signal move while you step. [browser_2d.text("elapsed " + elapsed().toFixed(1) + "s", 300, 80, 34, "white")]
+Test one, a hold. This cube jumps big the instant the bracket fires, and drops back after three seconds. [!let a = browser_3d.cube(1, 1, 1, "blue", -3, 2)] [browser_3d.scale(a, elapsed() < 3 ? 1.6 : 1)]
+Nothing switched it back. The expression just stopped being true.
+Test two, a ramp. This sphere slides right over two seconds, driven by elapsed alone, with no duration argument. [!let b = browser_3d.sphere(0.5, 0.5, 0.5, "cyan", -3, 0)] [browser_3d.move(b, lerp(-3, 0, ramp(2)), 0, 0)]
+And it fades up over three seconds, on its own separate clock. [browser_3d.opacity(b, ramp(3))]
+Test three, the same motion twice. This one uses a built-in duration tween. [!let c = browser_3d.sphere(0.4, 0.4, 0.4, "orange", 0, 2)] [!browser_3d.move(c, 3, 2, 0, 2)]
+This one uses elapsed instead. [!let d = browser_3d.sphere(0.4, 0.4, 0.4, "orange", 0, -2)] [browser_3d.move(d, lerp(0, 3, ramp(2)), -2, 0)]
+Watch both. If they look the same, the engine tween and elapsed are two mechanisms doing one job.
+Test four, nesting done wrong on purpose. This torus should grow when its gate opens, two lines from here. [!let e = browser_3d.torus(0.8, 0.15, "violet", 3, 0)] [browser_3d.scale(e, between(2, 4) ? lerp(1, 2, ramp(1)) : 1)]
+Keep reading.
+The gate is open now, but it snapped instead of growing: elapsed counts from when the bracket fired, not from when the gate opened, so the ramp finished while you were reading.
+Keep reading.
+The gate just closed, and it snapped back.
+Test five, nesting done right. Put the driver on the line where the effect starts, so both clocks begin together. [!let f = browser_3d.cube(0.8, 0.8, 0.8, "lime", 3, -2)] [browser_3d.scale(f, between(0, 2) ? lerp(1, 2, ramp(1)) : 1)]
+That grew over one second, because the gate opened at the same moment the clock started.
+And now it has dropped, because the gate closed here.
+Test six, the re-arm. Step backward up to line seventeen, then forward again: both of its clocks restart, and the cube grows from one all over again.
+Test seven, deliberate breakage. Insert a new line anywhere between line seventeen and line nineteen, save, and step through again. The gate will now open and close at the wrong moments.
+That is the weakness of counting lines to reach a distant moment, and the argument for naming moments instead.
+Done. [RESET()]
